@@ -52,10 +52,28 @@ bulk capture endpoints only exist at 5 Gbit/s.
 The device confirms this itself: its BOS descriptor reports
 `bFunctionalitySupport = SuperSpeed`, meaning full functionality is
 unavailable on a slower link. `hd60s-linkcheck.py` decodes that and warns
-loudly when the link is degraded. If it says
-`NOT SuperSpeed`, fix the cable or port before anything else — most USB-C
-cables sold are USB 2.0 only, and some are charge-only with no data pairs at
-all. Use the cable that shipped with the device, into a SuperSpeed port.
+loudly when the link is degraded.
+
+### If linkcheck says the SuperSpeed half is "not attached"
+
+That means the receptacle is wired for USB 3 and the USB 2 pairs are making
+contact, but the SuperSpeed pairs are not. Work through these in order — they
+are sorted by effort, not likelihood:
+
+1. **Flip the USB-C plug 180° at the device end.** USB-C carries two
+   SuperSpeed pair sets (TX1/RX1 and TX2/RX2); a C-to-A cable wires one, and
+   the device muxes to whichever the orientation selects. If one set of pins in
+   the device receptacle is bent, worn or dirty, flipping uses the other set.
+   Costs five seconds and fixes a genuinely common failure.
+2. **Move to a port that is holding a SuperSpeed link right now.** linkcheck
+   lists them. A port proven good this second beats a port labelled SS.
+3. **Put a known-good USB 3 device on the same cable and port.** If it trains
+   at 5000M, cable and port are cleared and the capture device's SuperSpeed
+   side is the fault.
+
+Note that a cable being sold as "USB 3.0", or having a coloured insert, says
+nothing about whether all four SuperSpeed conductors actually make contact.
+`not attached` is a measurement; the label is a claim.
 
 ## Safety
 

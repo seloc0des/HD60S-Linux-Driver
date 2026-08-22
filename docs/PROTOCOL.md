@@ -166,10 +166,13 @@ CYUSB3014 exposes, left enabled in the production image.
 ```
 bmRequestType 0xC0   (vendor, device-to-host, device recipient)
 bRequest      0xA0
-wValue        addr >> 16
-wIndex        addr & 0xffff
+wValue        addr & 0xffff     <- LOW half
+wIndex        addr >> 16        <- HIGH half
 wLength       bytes to read
 ```
+
+The half-ordering above is the FX3 boot loader convention and is inferred, not
+yet directly confirmed — see 5.2 for the evidence.
 
 Confirmed by reading address `0x00000000` twice through two independent code
 paths (the EP0 sweep and `hd60s-dumpram`) and getting byte-identical results:
@@ -210,21 +213,44 @@ read directly. That would yield the whole command set without needing a
 `usbmon` capture of the official driver — the route the published teardown
 took. This is the single most promising lead in the project.
 
-### 5.2 Reading past address 0 wedges EP0 [OBSERVED — HAZARD]
+### 5.2 A non-zero `wIndex` wedges EP0 [OBSERVED — HAZARD]
 
-Reads inside the low I-TCM window succeed. A read at `0x40000000` returned 64
-zero bytes; the next read at `0x40000040` **timed out**, and every subsequent
-control transfer — including re-reading address 0, which had worked seconds
-earlier — also timed out. Continuing past that point took the device off the
-bus entirely and required a physical replug.
+Every read attempted so far falls into a clean pattern:
 
-Unresolved [UNKNOWN]: whether the handler only services a limited window,
-whether back-to-back transfers need pacing, or whether SYSMEM reads need the
-MCU handshake first.
+| Requested addr | wValue | wIndex | Result |
+|---|---|---|---|
+| `0x00000000` | `0x0000` | `0x0000` | vector table, 64 B |
+| `0x40000000` | `0x4000` | `0x0000` | 64 zero bytes |
+| `0x00000040` | `0x0000` | `0x0040` | **timeout** |
+| `0x40000040` | `0x4000` | `0x0040` | **timeout** |
 
-`hd60s-dumpram` now distinguishes the two failure modes and **stops dead on the
-first timeout**, because a stall is harmless but a timeout means EP0 is already
-wedged. It also paces transfers (`--delay`, default 5 ms).
+Every success had `wIndex = 0`; every timeout had `wIndex != 0`. This is not an
+address-range boundary — the tool was sending the address halves **swapped**.
+Under the FX3 convention `wIndex` is the *high* half, so asking for `0x40` was
+really asking for `0x0040_0000`: unmapped, no response, EP0 wedged.
+
+It also explains the "`0x40000000` returns zeros" result: with the halves
+swapped that request actually fetched `0x0000_4000`, the end of the 16 KB
+I-TCM, which is plausibly zero-filled.
+
+[UNKNOWN] The corrected ordering is **not yet confirmed on hardware** — the
+device needs a physical replug between attempts and the test has not completed.
+The first thing to do next is read `0x40` with `wValue=0x40, wIndex=0`.
+
+#### Recovery behaviour
+
+Once EP0 wedges, it stays wedged: subsequent transfers time out even at
+address 0, which previously worked. `libusb_reset_device` did not bring it
+back; the device fell off the bus and needed a **physical replug** (it is bus
+powered, so unplugging power-cycles it).
+
+No writes have ever been issued to the device, so there is no risk to the flash
+image — a wedge costs a replug, not hardware.
+
+`hd60s-dumpram` therefore **stops dead on the first timeout** rather than
+continuing (continuing is what escalated a stall into a bus dropout), paces
+transfers with `--delay` (default 5 ms), and offers `--reset` to attempt
+recovery without a replug.
 
 ### 5.3 `0xC0`, `0xC2`, `0xC3` — probably not real commands [OBSERVED]
 

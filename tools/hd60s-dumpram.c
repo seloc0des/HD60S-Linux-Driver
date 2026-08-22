@@ -1,8 +1,13 @@
 /* hd60s-dumpram -- read device memory over the Cypress FX3 vendor RAM command.
  *
  * The HD60 S ships with bRequest 0xA0 (the standard Cypress RAM access command)
- * still enabled. Address is split across the setup packet the usual FX3 way:
- *   wValue = addr >> 16, wIndex = addr & 0xffff
+ * still enabled. The FX3 boot loader splits the address across the setup packet
+ * with the LOW half in wValue:
+ *   wValue = addr & 0xffff,  wIndex = addr >> 16
+ *
+ * Getting this backwards is not harmless: a swapped high half points at an
+ * unmapped region, the device never answers, and EP0 wedges. --legacy-order
+ * exists only to demonstrate that failure, not for real use.
  *
  * SAFETY: reads only. Every transfer is bmRequestType 0xC0 -- vendor, IN,
  * device recipient. The matching OUT direction (0x40) is how you *write* RAM
@@ -42,13 +47,52 @@ static void on_sig(int s)
 	stop = 1;
 }
 
+/* set by --legacy-order to reproduce the swapped-halves bug on purpose */
+static int legacy_order;
+
 static int read_chunk(libusb_device_handle *h, uint32_t addr, uint8_t *buf,
 		      int len)
 {
-	return libusb_control_transfer(h, RQ_IN, VENDOR_RAM,
-				       (uint16_t)(addr >> 16),
-				       (uint16_t)(addr & 0xffff), buf,
+	uint16_t wval = (uint16_t)(addr & 0xffff);
+	uint16_t widx = (uint16_t)(addr >> 16);
+
+	if (legacy_order) {
+		uint16_t t = wval;
+
+		wval = widx;
+		widx = t;
+	}
+	return libusb_control_transfer(h, RQ_IN, VENDOR_RAM, wval, widx, buf,
 				       (uint16_t)len, 1000);
+}
+
+/* A wedged EP0 only clears on a port reset. libusb_reset_device does exactly
+ * what replugging does, minus the walk to the desk. The handle is invalidated
+ * by the reset, so reopen afterwards. */
+static libusb_device_handle *open_device(libusb_context *ctx, int do_reset)
+{
+	libusb_device_handle *h = libusb_open_device_with_vid_pid(ctx, HD60S_VID,
+								  HD60S_PID);
+	if (!h)
+		return NULL;
+	if (!do_reset)
+		return h;
+
+	log_info("resetting device to clear any wedged EP0...");
+	libusb_reset_device(h);
+	libusb_close(h);
+
+	/* give the kernel a moment to re-enumerate before grabbing it again */
+	for (int i = 0; i < 20; i++) {
+		usleep(250 * 1000);
+		h = libusb_open_device_with_vid_pid(ctx, HD60S_VID, HD60S_PID);
+		if (h) {
+			log_info("device back after reset");
+			return h;
+		}
+	}
+	log_err("device did not come back after reset -- replug it");
+	return NULL;
 }
 
 int main(int argc, char **argv)
@@ -61,7 +105,7 @@ int main(int argc, char **argv)
 	FILE *f = NULL;
 	uint8_t *buf, *vbuf;
 	uint32_t done = 0, gaps = 0;
-	int delay_ms = 5, timed_out = 0;
+	int delay_ms = 5, timed_out = 0, do_reset = 0;
 
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--addr") && i + 1 < argc)
@@ -76,12 +120,18 @@ int main(int argc, char **argv)
 			verify = 1;
 		else if (!strcmp(argv[i], "--delay") && i + 1 < argc)
 			delay_ms = atoi(argv[++i]);
+		else if (!strcmp(argv[i], "--legacy-order"))
+			legacy_order = 1;
+		else if (!strcmp(argv[i], "--reset"))
+			do_reset = 1;
 		else {
 			fprintf(stderr,
 				"usage: %s [--addr A] [--len N] [--chunk N] [--out FILE] [--verify]\n"
 				"  defaults to the FX3 SYSMEM window (0x%08x, %u bytes)\n"
 				"  --verify    re-read each chunk and flag mismatches\n"
 				"  --delay N   ms to pause between reads (default 5)\n"
+				"  --legacy-order  swap the address halves (reproduces the bug)\n"
+				"  --reset      port-reset first, clearing a wedged EP0\n"
 				"  with no --out, hexdumps to stdout\n",
 				argv[0], FX3_SYSMEM, FX3_SYSMEM_LEN);
 			return 2;
@@ -105,7 +155,7 @@ int main(int argc, char **argv)
 		log_err("libusb_init failed");
 		return 1;
 	}
-	h = libusb_open_device_with_vid_pid(ctx, HD60S_VID, HD60S_PID);
+	h = open_device(ctx, do_reset);
 	if (!h) {
 		log_err("no %04x:%04x, or permission denied", HD60S_VID, HD60S_PID);
 		libusb_exit(ctx);

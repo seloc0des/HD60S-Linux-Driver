@@ -91,9 +91,38 @@ resolution/framerate, or refusing to stream video at all. [UNKNOWN] which.
 
 ## 4. SuperSpeed personality [UNKNOWN]
 
-Not yet captured — the device has so far only linked at 480M on this host,
-across two different xHCI controllers (Renesas `0000:04:00.0` and
-`0000:08:00.3`).
+Not yet captured. The device has so far only linked at 480M on this host,
+across three cables and multiple ports on two different xHCI controllers
+(Renesas `0000:04:00.0` and `0000:08:00.3`).
+
+### The device does advertise SuperSpeed [OBSERVED]
+
+Its BOS descriptor, read at High Speed, is unambiguous:
+
+```
+05 0f 16 00 02                    BOS, wTotalLength=22, 2 capabilities
+07 10 02 02 00 00 00              USB 2.0 EXTENSION
+0a 10 03 00 0e 00 03 00 00 00     SUPERSPEED_USB
+```
+
+Decoding the SuperSpeed capability:
+
+| Field | Value | Meaning |
+|---|---|---|
+| `wSpeedsSupported` | `0x000e` | Full + High + **SuperSpeed 5G** |
+| `bFunctionalitySupport` | `0x03` | **full functionality requires SuperSpeed** |
+| `bmAttributes` | `0x00` | no LTM |
+
+Two things follow, and both are load-bearing for the driver design:
+
+1. The silicon's USB 3 stack is alive and requesting a 5 Gbit/s link. When the
+   link trains at 480M the fault is in the cable or port, not the device.
+2. `bFunctionalitySupport = 3` is the device *itself* declaring that its full
+   function set is unavailable below SuperSpeed. This is direct evidence that
+   the USB 2.0 personality is not a usable capture mode, independent of the
+   bandwidth arithmetic in section 3.
+
+`tools/hd60s-linkcheck.py` performs this decode and prints a verdict.
 
 Expected once a SuperSpeed link trains, based on the CYUSB3014 design:
 - a **BOS descriptor** advertising `SUPERSPEED_USB` capability

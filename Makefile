@@ -47,9 +47,11 @@ install: all install-udev
 	install -m 0755 $(PROBE) $(BINDIR)/$(PROBE)
 	install -m 0755 tools/hd60s-descdump.py $(BINDIR)/hd60s-descdump
 	install -m 0755 tools/hd60s-watch.sh $(BINDIR)/hd60s-watch
+	install -m 0755 tools/hd60s-linkcheck.py $(BINDIR)/hd60s-linkcheck
 
 uninstall:
 	rm -f $(BINDIR)/$(PROBE) $(BINDIR)/hd60s-descdump $(BINDIR)/hd60s-watch
+	rm -f $(BINDIR)/hd60s-linkcheck
 	rm -f $(UDEVDIR)/99-elgato-hd60s.rules
 	udevadm control --reload-rules
 

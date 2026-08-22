@@ -19,23 +19,26 @@ show up as a webcam.
 ## Quick start
 
 ```bash
-# 1. Descriptor dump -- no dependencies, no root
+# 1. Is the link healthy? Start here -- most problems are a USB 2.0 cable
+./tools/hd60s-linkcheck.py
+
+# 2. Descriptor dump -- no dependencies, no root
 ./tools/hd60s-descdump.py
 
-# 2. Watch for (re)enumeration and snapshot each one
+# 3. Watch for (re)enumeration and snapshot each one
 ./tools/hd60s-watch.sh
 
-# 3. Build the RE probe
+# 4. Build the RE probe
 sudo apt install libusb-1.0-0-dev     # Fedora: libusb1-devel  Arch: libusb
 make
 
-# 4. Device access without sudo, then replug
+# 5. Device access without sudo, then replug
 sudo make install-udev
 
-# 5. Listen to what the device volunteers on its interrupt endpoint
+# 6. Listen to what the device volunteers on its interrupt endpoint
 ./hd60s-probe --seconds 30
 
-# 6. Find which EP0 vendor requests are implemented (read-only, safe)
+# 7. Find which EP0 vendor requests are implemented (read-only, safe)
 ./hd60s-probe --sweep --seconds 0
 ```
 
@@ -46,7 +49,10 @@ a reduced personality whose isochronous endpoint tops out at 3072 B/microframe
 = **197 Mbit/s**, against roughly 2000 Mbit/s for uncompressed 1080p60. The
 bulk capture endpoints only exist at 5 Gbit/s.
 
-`hd60s-descdump.py` warns loudly when the link is degraded. If it says
+The device confirms this itself: its BOS descriptor reports
+`bFunctionalitySupport = SuperSpeed`, meaning full functionality is
+unavailable on a slower link. `hd60s-linkcheck.py` decodes that and warns
+loudly when the link is degraded. If it says
 `NOT SuperSpeed`, fix the cable or port before anything else — most USB-C
 cables sold are USB 2.0 only, and some are charge-only with no data pairs at
 all. Use the cable that shipped with the device, into a SuperSpeed port.

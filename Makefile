@@ -18,10 +18,11 @@ UDEVDIR ?= /etc/udev/rules.d
 
 COMMON  := src/util.o
 PROBE   := hd60s-probe
+DUMP    := hd60s-dumpram
 
 .PHONY: all clean install uninstall install-udev check-deps
 
-all: check-deps $(PROBE)
+all: check-deps $(PROBE) $(DUMP)
 
 check-deps:
 	@pkg-config --exists libusb-1.0 || { \
@@ -37,6 +38,9 @@ check-deps:
 $(PROBE): tools/hd60s-probe.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
+$(DUMP): tools/hd60s-dumpram.o $(COMMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
+
 # udev rule lets the logged-in desktop user talk to the device without sudo.
 install-udev:
 	install -m 0644 udev/99-elgato-hd60s.rules $(UDEVDIR)/99-elgato-hd60s.rules
@@ -45,6 +49,7 @@ install-udev:
 
 install: all install-udev
 	install -m 0755 $(PROBE) $(BINDIR)/$(PROBE)
+	install -m 0755 $(DUMP) $(BINDIR)/$(DUMP)
 	install -m 0755 tools/hd60s-descdump.py $(BINDIR)/hd60s-descdump
 	install -m 0755 tools/hd60s-watch.sh $(BINDIR)/hd60s-watch
 	install -m 0755 tools/hd60s-linkcheck.py $(BINDIR)/hd60s-linkcheck
@@ -56,4 +61,4 @@ uninstall:
 	udevadm control --reload-rules
 
 clean:
-	rm -f $(PROBE) src/*.o tools/*.o
+	rm -f $(PROBE) $(DUMP) src/*.o tools/*.o

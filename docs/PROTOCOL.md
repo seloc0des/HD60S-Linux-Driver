@@ -155,9 +155,107 @@ Until then the streaming layer must not be finalised.
 
 ---
 
-## 5. Control protocol [UNKNOWN]
+## 5. Control protocol
 
-Nothing about the vendor command set is confirmed. Specifically unknown:
+### 5.1 `bRequest 0xA0` — Cypress RAM read [OBSERVED]
+
+The shipping firmware still answers the **standard Cypress FX3 vendor RAM
+command**. This is not an Elgato command; it is the boot-loader interface the
+CYUSB3014 exposes, left enabled in the production image.
+
+```
+bmRequestType 0xC0   (vendor, device-to-host, device recipient)
+bRequest      0xA0
+wValue        addr >> 16
+wIndex        addr & 0xffff
+wLength       bytes to read
+```
+
+Confirmed by reading address `0x00000000` twice through two independent code
+paths (the EP0 sweep and `hd60s-dumpram`) and getting byte-identical results:
+
+```
+0000  28 f0 9f e5 28 f0 9f e5  28 f0 9f e5 28 f0 9f e5
+0010  28 f0 9f e5 28 f0 9f e5  20 f1 1f e5 24 f0 9f e5
+0020  fe ff ff ea fe ff ff ea  fe ff ff ea 1e ff 2f e1
+0030  9c ea 01 40 2c 30 00 40  6c f2 01 40 38 30 00 40
+```
+
+That decodes as an **ARM32 exception vector table** — the CYUSB3014's I-TCM at
+address 0:
+
+| Offset | Word | Instruction | Vector |
+|---|---|---|---|
+| `0x00` | `e59ff028` | `LDR PC, [PC, #0x28]` | Reset |
+| `0x04` | `e59ff028` | `LDR PC, [PC, #0x28]` | Undefined |
+| `0x08` | `e59ff028` | `LDR PC, [PC, #0x28]` | SWI |
+| `0x0c` | `e59ff028` | `LDR PC, [PC, #0x28]` | Prefetch abort |
+| `0x10` | `e59ff028` | `LDR PC, [PC, #0x28]` | Data abort |
+| `0x14` | `e59ff028` | `LDR PC, [PC, #0x28]` | (reserved) |
+| `0x18` | `e51ff120` | `LDR PC, [PC, #-0x120]` | IRQ |
+| `0x1c` | `e59ff024` | `LDR PC, [PC, #0x24]` | FIQ |
+| `0x20` | `eafffffe` | `B .` | handler: spin |
+| `0x2c` | `e12fff1e` | `BX LR` | handler: return |
+| `0x30` | `0x4001ea9c` | — | branch target, SYSMEM |
+| `0x34` | `0x4000302c` | — | branch target, SYSMEM |
+| `0x38` | `0x4001f26c` | — | branch target, SYSMEM |
+| `0x3c` | `0x40003038` | — | branch target, SYSMEM |
+
+The targets sit in `0x4000_0000`+, the FX3 SYSMEM window, which is where the
+running firmware lives.
+
+**Why this matters:** if the readable window can be extended to cover SYSMEM,
+the firmware can be dumped and disassembled, and the vendor command handler
+read directly. That would yield the whole command set without needing a
+`usbmon` capture of the official driver — the route the published teardown
+took. This is the single most promising lead in the project.
+
+### 5.2 Reading past address 0 wedges EP0 [OBSERVED — HAZARD]
+
+Reads inside the low I-TCM window succeed. A read at `0x40000000` returned 64
+zero bytes; the next read at `0x40000040` **timed out**, and every subsequent
+control transfer — including re-reading address 0, which had worked seconds
+earlier — also timed out. Continuing past that point took the device off the
+bus entirely and required a physical replug.
+
+Unresolved [UNKNOWN]: whether the handler only services a limited window,
+whether back-to-back transfers need pacing, or whether SYSMEM reads need the
+MCU handshake first.
+
+`hd60s-dumpram` now distinguishes the two failure modes and **stops dead on the
+first timeout**, because a stall is harmless but a timeout means EP0 is already
+wedged. It also paces transfers (`--delay`, default 5 ms).
+
+### 5.3 `0xC0`, `0xC2`, `0xC3` — probably not real commands [OBSERVED]
+
+The sweep showed these returning 64 bytes each, but the payload is the *same
+vector-table content* `0xA0` returned, with only the first one or two bytes
+differing (`0xC2` → `01`, `0xC3` → `ff ff`). Since the sweep issues `0xA0`
+first, the most economical explanation is that these codes are unimplemented
+and the device is returning a **stale EP0 buffer**, with a short status value
+written over the front.
+
+Do not treat these as commands without independent confirmation. Re-run the
+sweep on a freshly replugged device *without* issuing `0xA0` first: if the
+payload is then absent or different, the stale-buffer theory is confirmed.
+
+### 5.4 Interrupt endpoint 0x81 is silent [OBSERVED]
+
+Zero packets in 40 s, including across a physical HDMI connect and disconnect,
+and zero in 20 s with a Nintendo Switch connected and outputting.
+
+So EP 0x81 is **demand-driven, not free-running**: it reports only after some
+vendor command arms it. The daemon therefore cannot rely on unsolicited status
+events, and `hd60s-probe` listening alone will never produce data.
+
+### 5.5 Input state is not exposed via a naive sweep [OBSERVED]
+
+Sweeps taken with no HDMI input and with a Switch connected at 1080p are
+**byte-identical** (`diff` empty). That is consistent with 5.1 and 5.3: the
+only responding request is a RAM read of a fixed code region, which of course
+does not change with input state. No status register has been located yet.
+
+### 5.6 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

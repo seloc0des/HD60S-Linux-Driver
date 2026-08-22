@@ -1,4 +1,5 @@
 hd60s-probe
+hd60s-dumpram
 *.o
 docs/enumerations/
 docs/watch.log

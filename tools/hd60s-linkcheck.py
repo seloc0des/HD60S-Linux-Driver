@@ -61,6 +61,61 @@ def parse_bos(blob):
     return ss, fs, caps
 
 
+def port_peer_state(node):
+    """For the port the device sits on, report its SuperSpeed peer.
+
+    A USB 3 receptacle is two logical ports: the USB 2 half and the SuperSpeed
+    half, linked by a 'peer' symlink. If the USB 2 half is 'configured' while
+    the peer is 'not attached', the SS differential pairs aren't connecting --
+    that is cable or connector, not the controller.
+    """
+    base = os.path.basename(node)            # eg "3-1"
+    if "-" not in base:
+        return None
+    bus, _, port = base.partition("-")
+    if not port.isdigit():
+        return None                           # device sits behind a hub
+
+    root = os.path.realpath(os.path.join(SYSFS, "usb" + bus))
+    pdir = os.path.join(root, "%s-0:1.0" % bus, "usb%s-port%s" % (bus, port))
+    if not os.path.isdir(pdir):
+        return None
+
+    info = {"port": os.path.basename(pdir),
+            "state": rd(os.path.join(pdir, "state"), "?"),
+            "peer": None, "peer_state": None}
+    peer = os.path.realpath(os.path.join(pdir, "peer")) \
+        if os.path.islink(os.path.join(pdir, "peer")) else None
+    if peer:
+        info["peer"] = os.path.basename(peer)
+        info["peer_state"] = rd(os.path.join(peer, "state"), "?")
+    return info
+
+
+def all_ss_ports():
+    """Every SuperSpeed port on the host and whether anything is on it."""
+    out = []
+    for name in sorted(os.listdir(SYSFS)):
+        if not name.startswith("usb"):
+            continue
+        node = os.path.join(SYSFS, name)
+        try:
+            if int(rd(os.path.join(node, "speed"), "0")) < 5000:
+                continue
+        except ValueError:
+            continue
+        bus = name[3:]
+        root = os.path.realpath(node)
+        pbase = os.path.join(root, "%s-0:1.0" % bus)
+        if not os.path.isdir(pbase):
+            continue
+        for d in sorted(os.listdir(pbase)):
+            if not d.startswith("usb%s-port" % bus):
+                continue
+            out.append((d, rd(os.path.join(pbase, d, "state"), "?")))
+    return out
+
+
 def superspeed_roots():
     """Root hubs capable of 5G or better, with their PCI parent."""
     out = []
@@ -125,6 +180,28 @@ def main():
     else:
         print("  Device does not advertise SuperSpeed. Either its USB 3 side is")
         print("  faulty, or it never negotiated a link that would expose it.")
+
+    pp = port_peer_state(node)
+    if pp:
+        print("\nPhysical port analysis:")
+        print("  USB 2 half   : %s  state=%s" % (pp["port"], pp["state"]))
+        if pp["peer"]:
+            print("  SuperSpeed   : %s  state=%s" % (pp["peer"], pp["peer_state"]))
+            if pp["peer_state"] == "not attached":
+                print("  -> This receptacle IS wired for USB 3, but its SuperSpeed")
+                print("     half sees nothing while the USB 2 half is connected.")
+                print("     The SS differential pairs are not making a link:")
+                print("     that is the cable or a connector, not the controller.")
+        else:
+            print("  SuperSpeed   : NO PEER -- this receptacle is USB 2 only.")
+            print("  -> Move to a port that has a SuperSpeed peer.")
+
+    ss_ports = all_ss_ports()
+    live = [p for p, st in ss_ports if st == "configured"]
+    if live:
+        print("\n  SuperSpeed ports currently carrying a link: %s" % ", ".join(live))
+        print("  Those are proven-good. Try the HD60 S directly in one of them")
+        print("  (unplug whatever is there first) to rule the port out entirely.")
 
     print("\nSuperSpeed-capable root hubs on this host:")
     roots = superspeed_roots()

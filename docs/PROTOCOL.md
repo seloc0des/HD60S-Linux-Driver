@@ -124,6 +124,23 @@ Two things follow, and both are load-bearing for the driver design:
 
 `tools/hd60s-linkcheck.py` performs this decode and prints a verdict.
 
+### Where the link actually fails [OBSERVED]
+
+A USB 3 receptacle is two logical ports — the USB 2 half and the SuperSpeed
+half — joined by a `peer` symlink in sysfs. On the port under test:
+
+```
+usb3-port1  state=configured    peer=usb4-port1     <- HD60 S attaches here
+usb4-port1  state=not attached  peer=usb3-port1     <- SS half sees nothing
+usb4-port4  state=configured                        <- SS trains fine on this controller
+```
+
+So the receptacle is wired for USB 3, and the controller demonstrably trains
+SuperSpeed links on another of its ports. The USB 2 half configures while the
+SuperSpeed half never attaches, which localises the fault to the SS
+differential pairs — cable or connector, not the host controller and not the
+device's protocol stack.
+
 Expected once a SuperSpeed link trains, based on the CYUSB3014 design:
 - a **BOS descriptor** advertising `SUPERSPEED_USB` capability
   (`wSpeedsSupported` bit 3),

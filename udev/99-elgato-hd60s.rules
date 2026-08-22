@@ -1,0 +1,12 @@
+# Elgato Game Capture HD60 S (0fd9:005e)
+#
+# uaccess hands the device to whoever is logged in at the seat, which is what
+# you want on a desktop. It beats MODE="0666", which exposes the capture device
+# to every account and every sandboxed process on the box.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="005e", TAG+="uaccess"
+
+# Headless/service use: uncomment to grant the plugdev group instead.
+#SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="005e", GROUP="plugdev", MODE="0660"
+
+# The device draws little power but is sensitive to autosuspend mid-stream.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="005e", TEST=="power/control", ATTR{power/control}="on"

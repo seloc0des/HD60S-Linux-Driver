@@ -1,0 +1,131 @@
+[
+  {
+    "node": "3-2",
+    "speed": "480",
+    "serial": "0314BC38FC",
+    "descriptors": [
+      {
+        "type": "DEVICE",
+        "raw": "12011002ff000040d90f5e004f1f01020301",
+        "fields": {
+          "bcdUSB": "2.10",
+          "bDeviceClass": 255,
+          "bDeviceSubClass": 0,
+          "bDeviceProtocol": 0,
+          "bMaxPacketSize0": 64,
+          "idVendor": "0x0fd9",
+          "idProduct": "0x005e",
+          "bcdDevice": "1f.4f",
+          "bNumConfigurations": 1
+        }
+      },
+      {
+        "type": "CONFIG",
+        "raw": "090249000201008032",
+        "fields": {
+          "wTotalLength": 73,
+          "bNumInterfaces": 2,
+          "bConfigurationValue": 1,
+          "bmAttributes": "0x80",
+          "MaxPower": "100 mA"
+        }
+      },
+      {
+        "type": "INTERFACE",
+        "raw": "0904000001ff000000",
+        "fields": {
+          "bInterfaceNumber": 0,
+          "bAlternateSetting": 0,
+          "bNumEndpoints": 1,
+          "bInterfaceClass": 255,
+          "bInterfaceSubClass": 0,
+          "bInterfaceProtocol": 0
+        }
+      },
+      {
+        "type": "ENDPOINT",
+        "raw": "07058301000001",
+        "fields": {
+          "bEndpointAddress": "0x83 (EP 3 IN)",
+          "TransferType": "Isochronous",
+          "SyncType": "None",
+          "UsageType": "Data",
+          "wMaxPacketSize": "0x0000 (1x0 = 0 B)",
+          "bInterval": 1
+        }
+      },
+      {
+        "type": "INTERFACE",
+        "raw": "0904000101ff000000",
+        "fields": {
+          "bInterfaceNumber": 0,
+          "bAlternateSetting": 1,
+          "bNumEndpoints": 1,
+          "bInterfaceClass": 255,
+          "bInterfaceSubClass": 0,
+          "bInterfaceProtocol": 0
+        }
+      },
+      {
+        "type": "ENDPOINT",
+        "raw": "07058301000401",
+        "fields": {
+          "bEndpointAddress": "0x83 (EP 3 IN)",
+          "TransferType": "Isochronous",
+          "SyncType": "None",
+          "UsageType": "Data",
+          "wMaxPacketSize": "0x0400 (1x1024 = 1024 B)",
+          "bInterval": 1
+        }
+      },
+      {
+        "type": "INTERFACE",
+        "raw": "0904000201ff000000",
+        "fields": {
+          "bInterfaceNumber": 0,
+          "bAlternateSetting": 2,
+          "bNumEndpoints": 1,
+          "bInterfaceClass": 255,
+          "bInterfaceSubClass": 0,
+          "bInterfaceProtocol": 0
+        }
+      },
+      {
+        "type": "ENDPOINT",
+        "raw": "07058301001401",
+        "fields": {
+          "bEndpointAddress": "0x83 (EP 3 IN)",
+          "TransferType": "Isochronous",
+          "SyncType": "None",
+          "UsageType": "Data",
+          "wMaxPacketSize": "0x1400 (3x1024 = 3072 B)",
+          "bInterval": 1
+        }
+      },
+      {
+        "type": "INTERFACE",
+        "raw": "0904010001ff000000",
+        "fields": {
+          "bInterfaceNumber": 1,
+          "bAlternateSetting": 0,
+          "bNumEndpoints": 1,
+          "bInterfaceClass": 255,
+          "bInterfaceSubClass": 0,
+          "bInterfaceProtocol": 0
+        }
+      },
+      {
+        "type": "ENDPOINT",
+        "raw": "07058103400001",
+        "fields": {
+          "bEndpointAddress": "0x81 (EP 1 IN)",
+          "TransferType": "Interrupt",
+          "SyncType": "None",
+          "UsageType": "Data",
+          "wMaxPacketSize": "0x0040 (1x64 = 64 B)",
+          "bInterval": 1
+        }
+      }
+    ]
+  }
+]

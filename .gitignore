@@ -1,0 +1,4 @@
+hd60s-probe
+*.o
+docs/enumerations/
+docs/watch.log

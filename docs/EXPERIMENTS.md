@@ -62,12 +62,25 @@ evidence that USB 2.0 is not a usable capture mode.
 Requires selecting alt setting 1 or 2 on interface 0 and submitting
 isochronous transfers on EP 0x83 — not yet implemented in the probe.
 
+## E4b — RAM window via bRequest 0xA0 (DONE)
+
+Result: byte-granular reads work but the handler caps transfers at
+`addr + len <= 0xFC`. 252 bytes total, captured in
+`docs/captures/window-252.bin`. Not enough for a firmware dump; see
+`docs/PROTOCOL.md` 5.1.
+
 ## E5 — Full command set (blocked)
 
-The vendor command set cannot be derived by probing alone. It needs a `usbmon`
-capture of the official Windows/macOS driver driving the device, which then
-gets replayed and diffed. Until someone contributes one, the driver cannot
-stream.
+The vendor command set cannot be derived by probing alone -- E4b established
+that the RAM read cannot reach the SYSMEM where the handler lives. Two routes
+remain, in order of preference:
+
+1. **Elgato's firmware update image**, disassembled offline. Zero hardware risk,
+   and the SYSMEM anchors in PROTOCOL.md 5.1 give a starting point.
+2. **`usbmon` capture** of the official Windows/macOS driver, replayed and
+   diffed.
+
+Until one of those lands, the driver cannot stream.
 
 ---
 

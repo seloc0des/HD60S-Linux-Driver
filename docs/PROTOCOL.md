@@ -207,11 +207,61 @@ address 0:
 The targets sit in `0x4000_0000`+, the FX3 SYSMEM window, which is where the
 running firmware lives.
 
-**Why this matters:** if the readable window can be extended to cover SYSMEM,
-the firmware can be dumped and disassembled, and the vendor command handler
-read directly. That would yield the whole command set without needing a
-`usbmon` capture of the official driver — the route the published teardown
-took. This is the single most promising lead in the project.
+#### The window is capped at 252 bytes [OBSERVED]
+
+Addressing is genuinely byte-granular — a read at `0x84` returns exactly the
+4-byte-shifted content of a read at `0x80`, so this is real memory indexing and
+not a canned buffer.
+
+But the handler enforces `addr + len <= 0xFC`. Probing 4-byte reads:
+
+| Start | Result |
+|---|---|
+| `0xd0`, `0xe0`, `0xf0`, `0xf8` | ok |
+| `0xfc`, `0x100`, `0x110`, `0x140`, `0x200` | stall |
+
+The check is on the **end** of the transfer, not the start: `0xc0`+16 succeeds
+while `0xc0`+64 (ending at `0x100`) is rejected outright. Over-long requests are
+refused entirely rather than truncated.
+
+So exactly **252 bytes** (`0x00`–`0xFB`) are exposed — captured in
+`docs/captures/window-252.bin`. Everything beyond stalls cleanly, which is a
+deliberate bounds check rather than a fault.
+
+**A full firmware dump over `0xA0` is therefore not possible.** The vendor
+command handler lives in SYSMEM at `0x4000_0000`+ and is unreachable.
+
+#### What the 252 bytes contain [OBSERVED]
+
+| Range | Content |
+|---|---|
+| `0x00`–`0x2f` | ARM exception vectors, plus `B .` spin and `BX LR` handlers |
+| `0x30`–`0x4b` | seven SYSMEM branch targets |
+| `0x4c`–`0x7f` | six `LDR PC,[PC,#-4]` + absolute-address trampoline pairs, targeting I-TCM |
+| `0x80`–`0xfb` | 124 bytes, high entropy (98 distinct values in 124 bytes, max repeat 3) |
+
+The trampoline targets are I-TCM offsets `0x113c`, `0x204`, `0x76c`, `0x158`,
+`0x11a8`, `0xfd8` — all inside the 16 KB I-TCM but outside the readable window.
+
+The `0x80`–`0xfb` block is statistically random and **constant across repeated
+reads** (verified three times), so it is not a nonce, RNG output or counter.
+[UNKNOWN] whether it is a key, a signature, a device-unique identifier, or
+simply uninitialised memory.
+
+#### Where the firmware could still come from
+
+The SYSMEM handler addresses (`0x4001ea9c`, `0x4000302c`, `0x4001f26c`,
+`0x40003038`, `0x40003044`, `0x4001f270`, `0x4001f274`) are useful anchors *if*
+the firmware image is obtained another way. Two routes that don't involve
+poking the device:
+
+1. **Elgato's firmware update package.** The image ships in the vendor updater;
+   disassembling it offline carries zero risk to the hardware and would expose
+   the vendor command dispatch directly. Best next avenue.
+2. **`usbmon` capture** of the official driver on Windows/macOS (E5).
+
+Reading the SPI flash in-circuit is a third route but needs a hardware
+programmer on the pads.
 
 ### 5.2 A non-zero `wIndex` wedges EP0 [OBSERVED — HAZARD]
 

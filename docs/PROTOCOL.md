@@ -92,8 +92,22 @@ resolution/framerate, or refusing to stream video at all. [UNKNOWN] which.
 ## 4. SuperSpeed personality [UNKNOWN]
 
 Not yet captured. The device has so far only linked at 480M on this host,
-across three cables and multiple ports on two different xHCI controllers
+across several cables and four receptacles on two different xHCI controllers
 (Renesas `0000:04:00.0` and `0000:08:00.3`).
+
+An A/B swap settles where the fault is **not**. A USB 3 hub and the HD60 S were
+exchanged between two ports on the same controller:
+
+| Port | with the hub | with the HD60 S |
+|---|---|---|
+| `usb4-port3` | configured, 5000M | not attached |
+| `usb4-port4` | configured, 5000M | not attached |
+
+Both receptacles carry a genuine SuperSpeed link with another device and refuse
+to with the HD60 S. Host controller and ports are therefore cleared, leaving
+the cable or the device's own SuperSpeed pairs. Given several cables were tried
+with an identical signature — USB 2 half `configured`, SS half `not attached` —
+the device's USB-C receptacle is the leading suspect.
 
 ### The device does advertise SuperSpeed [OBSERVED]
 

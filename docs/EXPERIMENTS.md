@@ -1,0 +1,80 @@
+# Reverse-engineering experiment log
+
+Run these in order. Record the result of each in `docs/PROTOCOL.md` with an
+`[OBSERVED]` tag. An experiment that produces *nothing* is still a result —
+write it down, because "the interrupt endpoint is silent at idle" constrains
+the design just as much as a packet capture does.
+
+All of these are read-only and safe on a 480M link.
+
+---
+
+## E1 — Is the interrupt endpoint silent at idle?
+
+Nothing connected to the HD60 S's HDMI input.
+
+```bash
+./hd60s-probe --seconds 30
+```
+
+- **packets** → the device volunteers status unprompted. Record the cadence and
+  the byte layout; the repeating fields are the status register.
+- **zero packets** → EP 0x81 is demand-driven: it only reports after a vendor
+  command or a real input event. Proceed to E2.
+
+## E2 — Does HDMI hotplug generate an event?
+
+The strongest signal available without a captured command set. Start the probe,
+then physically connect an HDMI source to the **input** partway through, and
+disconnect it before the end.
+
+```bash
+./hd60s-probe --seconds 40
+```
+
+Correlate packet timestamps against when you plugged. A packet arriving within
+a few hundred ms of the plug event is a hotplug/signal-present notification,
+and diffing the connected vs disconnected payloads isolates the bits that carry
+signal-present, resolution, and HDCP state.
+
+Repeat with different source resolutions (1080p60, 1080p30, 720p60). Bytes that
+change with resolution are the timing/format fields.
+
+## E3 — Which EP0 vendor requests are implemented?
+
+```bash
+./hd60s-probe --sweep --seconds 0
+```
+
+Sweeps `bRequest` 0x00–0xFF for vendor IN requests at device and interface
+recipients. Codes that return data or a zero-length ACK are implemented; the
+rest stall. This is device-to-host only — nothing is written.
+
+Run it twice, with and without an HDMI source connected, and diff. Any request
+whose payload changes with input state is a status register worth naming.
+
+## E4 — Does the stream endpoint produce anything at 480M?
+
+The device declares `bFunctionalitySupport = SuperSpeed`, so this may well
+return nothing. Worth one attempt to find out; a negative result is documented
+evidence that USB 2.0 is not a usable capture mode.
+
+Requires selecting alt setting 1 or 2 on interface 0 and submitting
+isochronous transfers on EP 0x83 — not yet implemented in the probe.
+
+## E5 — Full command set (blocked)
+
+The vendor command set cannot be derived by probing alone. It needs a `usbmon`
+capture of the official Windows/macOS driver driving the device, which then
+gets replayed and diffed. Until someone contributes one, the driver cannot
+stream.
+
+---
+
+## Recording results
+
+Keep raw output — don't summarise into prose and throw the bytes away:
+
+```bash
+./hd60s-probe --seconds 40 2>&1 | tee docs/captures/e2-hotplug-$(date +%F-%H%M).log
+```

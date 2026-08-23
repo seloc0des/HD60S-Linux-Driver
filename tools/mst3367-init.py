@@ -96,9 +96,31 @@ def main():
     def f(v):
         return '0x%02x' % v if v is not None else '??'
 
+    # A flat walk of the call sites crosses branch boundaries, so the same
+    # (page, reg) can appear several times with different values -- those are
+    # alternatives, not steps. Flag it loudly; replaying blindly misconfigures
+    # the chip.
+    from collections import defaultdict
+    vals = defaultdict(set)
+    for _a, p_, r_, v_ in seq:
+        if None not in (p_, r_, v_):
+            vals[(p_, r_)].add(v_)
+    conflicts = {k: v for k, v in vals.items() if len(v) > 1}
+
     if args.emit_c:
         print('/* %s -- extracted from the vendor driver, %d writes */'
               % (name, len(seq)))
+        if conflicts:
+            print('/*')
+            print(' * WARNING: NOT a runnable sequence.')
+            print(' * %d (page, reg) pair(s) are written with more than one value,'
+                  % len(conflicts))
+            print(' * because this is a flat walk across branches in the original')
+            print(' * function. Resolve the control flow before replaying:')
+            for (p_, r_), vs in sorted(conflicts.items()):
+                print(' *   page 0x%02x reg 0x%02x <- %s'
+                      % (p_, r_, ', '.join('0x%02x' % v for v in sorted(vs))))
+            print(' */')
         print('static const struct { uint8_t page, reg, val; } mst3367_init[] = {')
         for _addr, p, r, v in seq:
             if None in (p, r, v):
@@ -114,6 +136,14 @@ def main():
     for addr, p, r, v in seq:
         print('  0x%08x  page %s  reg %s = %s' % (addr, f(p), f(r), f(v)))
     print('\n  %d/%d fully literal' % (known, len(seq)))
+    if conflicts:
+        print('\n  WARNING: not a runnable sequence -- %d (page, reg) pair(s)'
+              % len(conflicts))
+        print('  are written with conflicting values, i.e. this flat walk has')
+        print('  crossed branches in the original function:')
+        for (p_, r_), vs in sorted(conflicts.items()):
+            print('    page 0x%02x reg 0x%02x <- %s'
+                  % (p_, r_, ', '.join('0x%02x' % v for v in sorted(vs))))
 
 
 if __name__ == '__main__':

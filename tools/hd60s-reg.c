@@ -148,8 +148,8 @@ static void mst_dump(libusb_device_handle *h, uint8_t page)
 {
 	int r;
 
-	printf("MST3367 page 0x%02x, registers 0x00-0x3f:\n", page);
-	for (r = 0; r < 0x40; r++) {
+	printf("MST3367 page 0x%02x, registers 0x00-0xff:\n", page);
+	for (r = 0; r < 0x100; r++) {
 		uint8_t v;
 
 		if ((r % 16) == 0)

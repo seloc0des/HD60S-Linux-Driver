@@ -861,8 +861,38 @@ the rest computed at runtime and reported as `??` rather than guessed.
 ./tools/mst3367-init.py --emit-c   # as a C table
 ```
 
-Because the function branches, a flat extraction is not the exact runtime order.
-It is a starting point for replay, not a transcript.
+**It is not a runnable sequence, and the tool now says so.** The function
+branches on device variant and input mode, so a flat walk of the call sites
+crosses mutually exclusive paths. Nine `(page, reg)` pairs are written with
+conflicting values:
+
+```
+page 0x00 reg 0xad <- 0x00, 0x05      page 0x01 reg 0x19 <- 0x00, 0x02
+page 0x00 reg 0xb3 <- 0x00, 0x14      page 0x01 reg 0x24 <- 0x40, 0x41
+page 0x00 reg 0xb8 <- 0x00, 0x10      page 0x02 reg 0x07 <- 0x04, 0xf4
+page 0x01 reg 0x17 <- 0x00, 0x02      page 0x02 reg 0x27 <- 0x00, 0xff
+page 0x01 reg 0x18 <- 0x00, 0x02
+```
+
+Replaying the flat list would execute contradictory writes and misconfigure the
+receiver. The control flow has to be resolved first — the branch conditions are
+device-state fields (`[dev+0x8e60]`, `[dev+0x78f0]`) that are themselves set
+elsewhere in init.
+
+#### Mode detection
+
+`MST3367_HDMI_MODE_DETECT` (VMA `0x18ec0`) reads registers `0x55`, `0x57`–`0x5c`,
+`0x5f`, `0x6a`, `0x6b`, plus page `0x02` register `0x29`. Its first test is
+`(reg55 & 0x3c) == 0x3c`.
+
+On this device with a live HDMI source connected, `reg 0x55` reads `0x01`, so
+that test fails — **the receiver reports no detected mode**, which is expected
+while it remains uninitialised. Register content does change when a source is
+connected (page `0x01`: `0x28`/`0x29` go `06 00` -> `ce 07`, and `0x0e`/`0x0f`,
+`0x10`, `0x34` change), so the chip is seeing *something*; it is just not locked.
+
+[UNKNOWN] Signal detection therefore depends on completing the receiver init,
+which depends on resolving the branch conditions above.
 
 ### 5.13 Still unknown
 

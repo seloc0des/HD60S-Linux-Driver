@@ -657,6 +657,68 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 got ? "MATCH" : "TIMEOUT", i);
 			if (!got)
 				errors++;
+		} else if (!strcmp(tok[0], "mcu_write") && n >= 2) {
+			/* mcu_write CMD [byte...] -- the MCU is the gateway to
+			 * everything, so talking to it directly is worth a verb */
+			uint8_t data[64];
+			int nd = 0, k;
+
+			for (k = 2; k < n && nd < (int)sizeof(data); k++) {
+				long b;
+
+				if (parse_num(tok[k], &b) < 0)
+					break;
+				data[nd++] = (uint8_t)b;
+			}
+			if (nd != n - 2)
+				log_warn("  mcu 0x%02lx: parsed %d of %d byte(s)",
+					 a[0], nd, n - 2);
+			if (hd60s_mcu_write(d, (uint8_t)a[0], nd ? data : NULL, nd) < 0) {
+				log_err("%s:%d: mcu_write 0x%02lx rejected", path,
+					lineno, a[0]);
+				errors++;
+			} else {
+				log_info("  mcu 0x%02lx <- %d byte(s)", a[0], nd);
+			}
+		} else if (!strcmp(tok[0], "mcu_read") && n == 3) {
+			/* mcu_read CMD LEN */
+			uint8_t data[64];
+			int len = (int)a[1], k;
+			char hex[3 * 64 + 1];
+
+			if (len < 1 || len > (int)sizeof(data))
+				len = 8;
+			if (hd60s_mcu_read(d, (uint8_t)a[0], data, len) < 0) {
+				log_warn("  mcu 0x%02lx unreadable", a[0]);
+			} else {
+				for (k = 0; k < len; k++)
+					sprintf(hex + 3 * k, "%02x ", data[k]);
+				log_info("  mcu 0x%02lx -> %s", a[0], hex);
+			}
+		} else if (!strcmp(tok[0], "vendor_in") && n == 5) {
+			/* vendor_in REQ WVALUE WINDEX LEN */
+			uint8_t data[64];
+			int len = (int)a[3], k;
+			char hex[3 * 64 + 1];
+
+			if (len < 1 || len > (int)sizeof(data))
+				len = 8;
+			rc = libusb_control_transfer(d->h,
+						     LIBUSB_REQUEST_TYPE_VENDOR |
+							     LIBUSB_ENDPOINT_IN |
+							     LIBUSB_RECIPIENT_DEVICE,
+						     (uint8_t)a[0], (uint16_t)a[1],
+						     (uint16_t)a[2], data,
+						     (uint16_t)len, 1000);
+			if (rc < 0) {
+				log_warn("  vendor 0x%02lx IN -> %s", a[0],
+					 libusb_error_name(rc));
+			} else {
+				for (k = 0; k < rc; k++)
+					sprintf(hex + 3 * k, "%02x ", data[k]);
+				log_info("  vendor 0x%02lx IN %d byte(s) -> %s",
+					 a[0], rc, rc ? hex : "(empty)");
+			}
 		} else if (!strcmp(tok[0], "vendor_out") && n >= 4) {
 			/* vendor_out REQ WVALUE WINDEX [byte...] */
 			uint8_t data[64];

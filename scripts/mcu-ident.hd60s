@@ -1,0 +1,11 @@
+# Which MCU firmware is this board running?
+# sub-cmd 0x56/0x57 return a hardcoded 51 10 27 in BOTH images -- not a version.
+# sub-cmd 0x58 returns the build date as decimal-digits-as-hex:
+#   11 03 11 = 17/03/17 -> v170317 / BeddoRT   (MST3367 board)
+#   14 08 13 = 20/08/19 -> v200819 / BeddoRTv4 (IT6802 board)
+mcu_write 0x66 0xAA 0x03 0x12 0x34 0x56
+delay 50
+mcu_read  0x66 3
+mcu_write 0x66 0xAA 0x03 0x12 0x34 0x58
+delay 50
+mcu_read  0x66 3

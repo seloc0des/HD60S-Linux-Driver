@@ -339,9 +339,17 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		hd60s_stream_stop(&dev);
 		log_info("urbs %llu, with data %llu, bytes %llu",
 			 dev.pkts, dev.nonempty, dev.bytes);
-		if (g_use_framer)
-			log_info("frames %llu, resyncs %llu", g_framer.frames,
-				 g_framer.resyncs);
+		if (g_use_framer) {
+			char odd[64] = "";
+			int k;
+
+			for (k = 0; k < g_framer.noddval; k++)
+				snprintf(odd + strlen(odd), sizeof(odd) - strlen(odd),
+					 " 0x%02x", g_framer.oddval[k]);
+			log_info("frames %llu, resyncs %llu, odd markers %llu%s",
+				 g_framer.frames, g_framer.resyncs,
+				 g_framer.oddmark, odd);
+		}
 		hd60s_close(&dev);
 	}
 	g_sink->close(g_sink);

@@ -29,6 +29,9 @@ struct hd60s_framer {
 	int synced;
 	int saw_blank;
 	unsigned long long frames, resyncs;
+	unsigned long long oddmark;      /* FF 00 00 KK with an unrecognised KK */
+	uint8_t oddval[8];
+	int noddval;
 	hd60s_frame_cb on_frame;
 	void *user;
 };

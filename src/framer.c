@@ -92,6 +92,21 @@ void hd60s_framer_push(struct hd60s_framer *f, const uint8_t *data, size_t len)
 			take_line(f);
 			f->lpos = 0;
 		} else {
+			const uint8_t *m = f->line + HD60S_LINE_PIC;
+
+			/* a well-formed marker with an unknown type byte would be
+			 * a line carrying something other than picture -- audio,
+			 * most likely. Record it rather than silently resyncing. */
+			if (m[0] == 0xFF && m[1] == 0x00 && m[2] == 0x00) {
+				int k, known = 0;
+
+				f->oddmark++;
+				for (k = 0; k < f->noddval; k++)
+					if (f->oddval[k] == m[3])
+						known = 1;
+				if (!known && f->noddval < (int)sizeof(f->oddval))
+					f->oddval[f->noddval++] = m[3];
+			}
 			resync(f);
 		}
 	}

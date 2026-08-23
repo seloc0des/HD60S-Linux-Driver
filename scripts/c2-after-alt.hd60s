@@ -1,0 +1,10 @@
+# The one command that behaves differently before vs after SET_INTERFACE.
+# Zero-length OUT, per the vendor driver's unconditional call at 0x6fd47.
+mst_read 0x02 0x0e
+vendor_out 0xC2 0x0000 0x0000
+delay 50
+mst_read 0x02 0x0e
+mst_read 0x02 0x0f
+mst_read 0x00 0x55
+cpld_read 0x20
+cpld_read 0x3b

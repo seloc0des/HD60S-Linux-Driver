@@ -148,6 +148,7 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 
 	if (have_dev) {
 		dev.on_data = on_iso_data;
+		dev.diag_left = 10;
 		if (hd60s_stream_start(&dev, alt) < 0)
 			log_warn("iso streaming did not start; status only");
 		if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)

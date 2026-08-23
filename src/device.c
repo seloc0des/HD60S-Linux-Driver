@@ -224,6 +224,20 @@ int hd60s_handshake(struct hd60s_dev *d)
 
 /* --- isochronous streaming --------------------------------------------- */
 
+static const char *xfer_status(int st)
+{
+	switch (st) {
+	case LIBUSB_TRANSFER_COMPLETED: return "COMPLETED";
+	case LIBUSB_TRANSFER_ERROR:     return "ERROR";
+	case LIBUSB_TRANSFER_TIMED_OUT: return "TIMED_OUT";
+	case LIBUSB_TRANSFER_CANCELLED: return "CANCELLED";
+	case LIBUSB_TRANSFER_STALL:     return "STALL";
+	case LIBUSB_TRANSFER_NO_DEVICE: return "NO_DEVICE";
+	case LIBUSB_TRANSFER_OVERFLOW:  return "OVERFLOW";
+	}
+	return "?";
+}
+
 static void LIBUSB_CALL iso_cb(struct libusb_transfer *x)
 {
 	struct hd60s_dev *d = x->user_data;
@@ -235,6 +249,16 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *x)
 		libusb_free_transfer(x);
 		d->live--;
 		return;
+	}
+
+	if (d->diag_left > 0) {
+		d->diag_left--;
+		log_info("  iso urb: %s, pkt[0] %s len %u, pkt[1] %s len %u",
+			 xfer_status(x->status),
+			 xfer_status(x->iso_packet_desc[0].status),
+			 x->iso_packet_desc[0].actual_length,
+			 x->num_iso_packets > 1 ? xfer_status(x->iso_packet_desc[1].status) : "-",
+			 x->num_iso_packets > 1 ? x->iso_packet_desc[1].actual_length : 0);
 	}
 
 	for (i = 0; i < x->num_iso_packets; i++) {
@@ -321,6 +345,11 @@ static void LIBUSB_CALL bulk_cb(struct libusb_transfer *x)
 		libusb_free_transfer(x);
 		d->live--;
 		return;
+	}
+	if (d->diag_left > 0) {
+		d->diag_left--;
+		log_info("  bulk urb: %s, actual %d of %d",
+			 xfer_status(x->status), x->actual_length, x->length);
 	}
 	d->pkts++;
 	if (x->actual_length > 0) {

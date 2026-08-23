@@ -23,6 +23,7 @@ struct hd60s_dev {
 	int live;               /* transfers in flight */
 	volatile int stop;
 	unsigned long long pkts, nonempty, bytes;
+	int diag_left;          /* log this many transfer statuses, then shut up */
 	hd60s_data_cb on_data;
 	void *user;
 };

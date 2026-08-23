@@ -871,3 +871,37 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 	log_info("script done, %d error(s)", errors);
 	return errors ? -1 : 0;
 }
+
+/* The receiver clears its output enable whenever the input format changes, so
+ * a source that sleeps and wakes stops producing pixels for good unless we put
+ * it back. The vendor driver has the same problem and solves it by re-running
+ * MST3367_HwInitialize continuously while capturing; this is the small part of
+ * that which actually matters. */
+int hd60s_output_enabled(struct hd60s_dev *d)
+{
+	uint8_t b0 = 0;
+
+	if (hd60s_mst_read(d, 0x00, 0xb0, &b0) < 0)
+		return -1;
+	return (b0 & 0x01) ? 1 : 0;
+}
+
+int hd60s_enable_output(struct hd60s_dev *d)
+{
+	uint8_t ab = 0;
+
+	hd60s_mst_write(d, 0x01, 0x24, 0x40);
+	if (hd60s_mst_read(d, 0x00, 0xab, &ab) == 0)
+		hd60s_mst_write(d, 0x00, 0xab, (uint8_t)(ab & 0x7f));
+	hd60s_mst_write(d, 0x00, 0xad, 0x05);
+	hd60s_mst_write(d, 0x00, 0xb1, 0xc0);
+	hd60s_mst_write(d, 0x00, 0xb2, 0x00);
+	hd60s_mst_write(d, 0x00, 0xb3, 0x00);
+	hd60s_mst_write(d, 0x00, 0xb4, 0x54);
+	hd60s_mst_write(d, 0x00, 0xb5, 0x0c);
+	/* front-end reset pulse, as the vendor always issues after HDMI init */
+	hd60s_mst_write(d, 0x02, 0x07, 0xf4);
+	hd60s_mst_write(d, 0x02, 0x07, 0x04);
+	/* bit 0 is the output enable -- this is what starts the pixels */
+	return hd60s_mst_write(d, 0x00, 0xb0, 0x25);
+}

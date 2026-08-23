@@ -106,6 +106,13 @@ static void receiver_status(struct hd60s_dev *d, int *state, char *l1, char *l2,
 	htotal = ((hhi & 0x0f) << 8) | hlo;
 	locked = (v55 & 0x3c) == 0x3c;
 
+	/* re-arm if the source changed format or woke up: the receiver drops
+	 * its output enable and never sets it again by itself */
+	if (locked && hd60s_output_enabled(d) == 0) {
+		log_info("output enable was cleared (format change?) -- re-arming");
+		hd60s_enable_output(d);
+	}
+
 	if (g_dev_bytes) {
 		*state = 2;
 		snprintf(l1, n, "STREAMING");
@@ -115,7 +122,7 @@ static void receiver_status(struct hd60s_dev *d, int *state, char *l1, char *l2,
 		*state = 1;
 		snprintf(l1, n, "SIGNAL LOCKED");
 		snprintf(l2, n, "%d X %d TOTAL", htotal, vtotal);
-		snprintf(l3, n, "NO DATA - NEEDS USB 3 LINK");
+		snprintf(l3, n, "WAITING FOR DATA");
 	} else {
 		*state = 0;
 		snprintf(l1, n, "NO SIGNAL");

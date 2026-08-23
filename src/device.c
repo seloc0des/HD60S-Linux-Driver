@@ -116,6 +116,27 @@ int hd60s_mst_read(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t *out)
 	return hd60s_i2c_read(d, HD60S_SLAVE_MST3367, reg, out);
 }
 
+/* CPLD (Altera MAX II, I2C slave 0x98) access. Like the MST3367 it is one of
+ * i2c_access's special slaves, so writes go out as wValue 0x5098 with a raw
+ * {reg, val} payload. Reads use the generic form.
+ *
+ * From CY3014_SetFpgaRegister / GetFpgaRegister -- misleadingly named: these
+ * are the CPLD byte accessors, not the FX3's bRequest-0xC1 register file.
+ */
+int hd60s_cpld_write(struct hd60s_dev *d, uint8_t reg, uint8_t val)
+{
+	uint8_t pkt[2] = { reg, val };
+	int rc = hd60s_mcu_write(d, HD60S_SLAVE_CPLD, pkt, sizeof(pkt));
+
+	usleep(8000);
+	return rc;
+}
+
+int hd60s_cpld_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out)
+{
+	return hd60s_i2c_read(d, HD60S_SLAVE_CPLD, reg, out);
+}
+
 /* Hot-plug detect toward the source: page 0 register 0xB7 bit 1.
  * The DDC/EDID path is gated by this -- the EDID EEPROM at slave 0xa0 only
  * appears on the bus once HPD is asserted. */
@@ -322,6 +343,9 @@ void hd60s_close(struct hd60s_dev *d)
  *   mst_write  PAGE REG VAL     MST3367 receiver, page-selected
  *   mst_read   PAGE REG
  *   delay      MS
+ *   cpld_write REG VAL          Altera MAX II CPLD (I2C slave 0x98)
+ *   cpld_read  REG
+ *   cpld_rmw   REG AND OR
  *   mst_rmw    PAGE REG AND OR          v = (v & AND) | OR
  *   poll_mst   PAGE REG MASK WANT [TRIES]   until (val & MASK) == WANT
  *   expect_mst PAGE REG MASK WANT           one-shot check, warns on mismatch
@@ -441,6 +465,36 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 got ? "MATCH" : "TIMEOUT", i);
 			if (!got)
 				errors++;
+		} else if (!strcmp(tok[0], "cpld_write") && n == 3) {
+			if (hd60s_cpld_write(d, (uint8_t)a[0], (uint8_t)a[1]) < 0) {
+				log_err("%s:%d: cpld_write rejected", path, lineno);
+				errors++;
+			} else {
+				uint8_t back = 0;
+
+				hd60s_cpld_read(d, (uint8_t)a[0], &back);
+				log_info("  cpld 0x%02lx <- 0x%02lx (reads 0x%02x)%s",
+					 a[0], a[1], back,
+					 back == (uint8_t)a[1] ? "" : " MISMATCH");
+			}
+		} else if (!strcmp(tok[0], "cpld_read") && n == 2) {
+			uint8_t v;
+
+			if (hd60s_cpld_read(d, (uint8_t)a[0], &v) == 0)
+				log_info("  cpld 0x%02lx = 0x%02x", a[0], v);
+		} else if (!strcmp(tok[0], "cpld_rmw") && n == 4) {
+			uint8_t v = 0;
+
+			if (hd60s_cpld_read(d, (uint8_t)a[0], &v) == 0) {
+				uint8_t nv = (uint8_t)((v & (uint8_t)a[1]) | (uint8_t)a[2]);
+				uint8_t back = 0;
+
+				hd60s_cpld_write(d, (uint8_t)a[0], nv);
+				hd60s_cpld_read(d, (uint8_t)a[0], &back);
+				log_info("  cpld rmw 0x%02lx: %02x -> %02x", a[0], v, back);
+			} else {
+				errors++;
+			}
 		} else if (!strcmp(tok[0], "mst_rmw") && n == 5) {
 			/* v = (v & AND) | OR -- the vendor init is almost all
 			 * read-modify-write, so express it directly */

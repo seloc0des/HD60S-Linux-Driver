@@ -1046,7 +1046,72 @@ comparison.
 [UNKNOWN] What completes vertical lock. Endpoint `0x83` remains silent
 throughout — no bytes in ~47000 isochronous packets.
 
-### 5.16 Still unknown
+### 5.16 CPLD access and the firmware scanner [OBSERVED]
+
+The CPLD (Altera MAX II, slave `0x98`) is another special slave: writes go out
+as `wValue 0x5098` with a raw `{reg, val}` payload. `CY3014_SetFpgaRegister` /
+`GetFpgaRegister` are its byte accessors — misleadingly named, since they are
+*not* the FX3's `bRequest 0xC1` register file.
+
+Register map from `CY3014_HwReset`:
+
+| Reg | Role | Bring-up value | Write takes? |
+|---|---|---|---|
+| `0x3B` | input route (`0x02` HDMI, `0x80` analog) | `0x02` | **no** |
+| `0x20` | mode | `0x05` | yes |
+| `0x00` | GPIO data port 0 | `0x01` | **no** (reads `0x1d`) |
+| `0x10` | GPIO direction port 0 (0 = output) | `0xFE` | yes |
+| `0x01` | GPIO data port 1 — HDMI hot-plug/enable lines | `\|= 0x03` | partly |
+| `0x11` | GPIO direction port 1 | `0xFC` | yes |
+
+For PID `0x005e` the FX3 `bRequest 0xC1` reg `0x2D` reset block at the head of
+`HwReset` is skipped entirely, so a Linux driver must not replay it.
+
+#### Firmware capability probes — trace confirmed on hardware
+
+`CY3014_HwInitialize` probes the FX3's capability bitmask, and the trace found
+that for PID `0x5e` the `0xC5` probe is deliberately skipped. Tested directly:
+
+| Request | Result |
+|---|---|
+| `0xC7` wValue `0x0064` | accepted |
+| `0xC5` wValue `0x0000` | **stalls** |
+| `0xC6` wValue `0x0000` | accepted |
+
+`0xC5` stalling and `0xC6` working is exactly what the disassembly predicts for
+this PID — an independent confirmation of the trace.
+
+A 56-byte scan table (14 four-byte `{reg, tag, mask, aux}` descriptors, per
+`CY3014_FillScanRegisters`) uploads successfully with `bRequest 0xC6`,
+wValue = period.
+
+[UNKNOWN] Even so, the interrupt endpoint `0x81` produces nothing. The scanner's
+results are supposed to arrive there.
+
+### 5.17 The USB 2.0 link is the prime suspect for the silent endpoints
+
+Both data endpoints are completely silent while the entire control plane works:
+
+| Path | Status |
+|---|---|
+| EP0 control (registers, MCU, I2C, EDID) | fully working |
+| Interrupt EP `0x81` | 0 packets, ever — including with the scanner enabled |
+| Isochronous EP `0x83` | ~60000 packets serviced, **0 bytes**, 0 errors |
+
+That combination — control plane perfect, both data endpoints mute — is what a
+device looks like when its firmware has not started its DMA channels.
+
+The device itself states the constraint: its BOS descriptor reports
+`bFunctionalitySupport = SuperSpeed` (5.9), i.e. full functionality is
+unavailable below 5 Gbit/s. The USB 2.0 personality reserves iso bandwidth of
+3072 B/microframe = 197 Mbit/s against roughly 2000 Mbit/s for uncompressed
+1080p60 — a tenth of what is needed.
+
+[UNKNOWN] Whether the FX3 firmware refuses to start streaming on a High Speed
+link, or whether some further configuration would start it anyway. This cannot
+be settled from this host until the SuperSpeed link trains.
+
+### 5.18 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

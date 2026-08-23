@@ -39,6 +39,8 @@ int hd60s_i2c_write(struct hd60s_dev *d, uint8_t slave, uint8_t reg, uint8_t val
 int hd60s_mst_read(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t *out);
 int hd60s_mst_write(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t val);
 int hd60s_handshake(struct hd60s_dev *d);
+int hd60s_cpld_write(struct hd60s_dev *d, uint8_t reg, uint8_t val);
+int hd60s_cpld_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out);
 int hd60s_set_hpd(struct hd60s_dev *d, int on);
 int hd60s_read_edid(struct hd60s_dev *d, uint8_t *buf, int len);
 

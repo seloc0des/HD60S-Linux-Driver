@@ -41,9 +41,9 @@ which *did* need a host firmware push. Do not port that logic here.
 |---|---|
 | Cypress/Infineon **CYUSB3014** (ARM926EJ-S) | USB 3.0 device controller, host-facing |
 | Nuvoton **M031LD2AE** (Cortex-M0) | housekeeping MCU, peripherals + LED |
-| ITE **IT6802E** | HDMI receiver (HDMI → parallel video) |
-| ITE **IT66121FN** | HDMI transmitter (passthrough out) |
-| Altera **MAX II** CPLD | formats parallel video into the CYUSB3014 GPIF-II bus |
+| **MST3367** | HDMI receiver (HDMI → parallel video), I2C slave `0x9c` |
+| ITE **IT66121FN** | HDMI transmitter (passthrough out), I2C slave `0x9a` |
+| Altera **MAX II** CPLD | GPIO expander, I2C slave `0x98` — *not* a datapath controller, see 7.6 |
 | Winbond **W25Q32JV** 4 MB SPI flash | CYUSB3014 boot image + LED animation data @ `0x300000` |
 | ITE **IT1504** | 16-ch LED driver |
 
@@ -1582,3 +1582,68 @@ This matters because it means a bring-up performed before the source is stable
 gets partially undone. It is consistent with the vendor driver re-running
 `MST3367_HwInitialize` continuously during capture. Running our bring-up twice
 with a 3 s gap does not by itself produce data.
+
+### 7.6 The CPLD is a GPIO expander, not the video path [OBSERVED]
+
+An earlier note in section 2 described the Altera MAX II as "formats parallel
+video into the GPIF-II bus". Nothing supports that and two things contradict it.
+
+Sweeping all 256 registers of slave `0x98`, only **nine** respond:
+
+| reg | value |
+|---|---|
+| `0x00` | `0x1d` |
+| `0x01` | `0x02` |
+| `0x10` | `0xfe` |
+| `0x11` | `0xff` |
+| `0x20` | `0x05` |
+| `0xf0`-`0xf3` | `54 45 53 54` = ASCII **"TEST"** |
+
+None of the 256 changes when video appears or disappears. And the vendor driver
+only ever reaches this slave through three functions, all of them GPIO:
+`CY3014_CPLD_LoadGPIO`, `CY3014_CPLD_SaveGPIO`, `CY3014_CPLD_SetGPIO`.
+
+So the CPLD is a GPIO latch with an ID signature. Poking its registers to find a
+"datapath enable" — which earlier sessions spent a long time doing — was never
+going to work. The video path from the receiver to the GPIF is not under its
+register control.
+
+### 7.7 The receiver is an MST3367 [OBSERVED] -- CORRECTION
+
+Section 2 previously listed the receiver as an ITE IT6802E. The string
+`IT6802` appears **zero** times in `CY3014.X64.SYS` and zero times in its PDB,
+while `MST3367` appears 14 and 73 times respectively. Our MST3367 register map
+also produces a genuine lock with correct timings (V total 1125, H total 2200,
+H active 1920) on real hardware, which it could not do against the wrong part.
+
+The transmitter really is an ITE part: `IT66` appears 136 times in the PDB.
+
+### 7.8 What `0xA0` can and cannot see [OBSERVED]
+
+`bRequest 0xA0` reads FX3 RAM and FX3 peripheral space alike, but not equally:
+
+- **RAM** (`0x00000000` ITCM, `0x40000000` SYSMEM) returns all four bytes of
+  every word. Address `0x00000000` reads `e59ff028` = `ldr pc, [pc, #0x28]`,
+  the ARM926 exception vector table.
+- **Peripherals** (`0xE00xxxxx`) return only the **low byte** of each 32-bit
+  register; bytes 1-3 always read zero. The peripheral decodes 32-bit accesses
+  only and the handler is doing byte-wise copies.
+
+This is a real limit on the diagnostic. FX3 socket registers keep their
+interesting bits high — `SCK_STATUS` bit 31 `SCK_ENABLE`, bit 25 `SCK_GO_ENABLE`
+— so we can see a socket's descriptor number change but not whether the socket
+is actually enabled.
+
+Socket layout confirmed against the observed data (sockets are `0x80` apart):
+
+| offset | register |
+|---|---|
+| `0x00` | `SCK_DSCR` (`0xff` = unused) |
+| `0x04` | `SCK_SIZE` |
+| `0x08` | `SCK_COUNT` |
+| `0x0C` | `SCK_STATUS` |
+| `0x10` | `SCK_INTR` |
+| `0x14` | `SCK_INTR_MASK` |
+| `0x20` | `DSCR_BUFFER` |
+| `0x24` | `DSCR_SYNC` |
+| `0x28` | `DSCR_CHAIN` |

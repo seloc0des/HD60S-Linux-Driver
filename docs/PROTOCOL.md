@@ -1856,3 +1856,70 @@ confirm the reads are real rather than a fixed preset:
 
 So the survey in 7.6 stands: nine live registers, four of them ASCII `TEST`,
 none of them reacting to video.
+
+## 10. Audio: where it is not [OBSERVED]
+
+The receiver has audio. MST3367 `p2 0x9B` reads `0x40`, and `libUB530.dylib`'s
+`GetAudioSampleRate` (vtable+0x40 -> `0x9184`) decodes that register's high
+nibble as `0xC0` -> 32000, `0x00` -> 44100, anything else -> 48000. So the
+source is locked at 48 kHz. `p2 0x0B` bit 6 (audio event) is set. That same
+register is one of the ten records in the `0xC6` scan list we send
+(`9B 82 F0 00`), so the vendor watches it the same way.
+
+The USB stream nevertheless carries video and nothing else. This was measured in
+the driver rather than sampled, because every earlier assumption here turned out
+to be wrong:
+
+| Hiding place | Instrument | Result |
+|---|---|---|
+| A third line type | count `FF 00 00 KK` with unknown `KK` | **0** across 16 GB |
+| Blanking payload | compare every blanking line against flat `10 80` fill | one non-flat line per frame, and it is itself uniform (`26 83 26 7c` x960) — a flat colour |
+| The 4-byte marker slot | capture the raw slot on every marker miss | only ever flat fill, never varying data |
+| A different alt | alt 2 iso vs alt 4 bulk | identical stream |
+| A second endpoint | descriptors | none; EP `0x81` is 64 B per 8 ms ≈ 8 KB/s, far under the 192 KB/s needed |
+| A second DMA channel | FX3 descriptor table at `0x40000000` | only GPIF sck 0/1 -> UIB sck 3, plus 256-byte CPU channels |
+
+The marker slot was the best candidate on arithmetic — 4 bytes x 1125 lines x
+60 fps = 270 KB/s against 192 KB/s needed — and it is simply unused.
+
+### 10.1 What has been swept, with video live
+
+An earlier CPLD sweep concluded "no effect", but it ran before `p0 0xB0` was
+found, i.e. against a dead stream, and proved nothing. Repeated properly:
+
+- all 256 CPLD registers, and all 16 GPIO lines driven low one at a time on a
+  freshly reset device: **0 odd markers, 0 change**, and video never lost sync
+  (1 resync across 5529 frames)
+- the MST3367 audio output block (`p2 0x17/0x19/0x1A/0x1B/0x22/0x27`): no change
+- `0xC2` and `0xC7` are fixed: `0xC7` only ever takes `wValue 0x64`, from a
+  re-init helper at `0xd06` that runs `0xC2(0)`, `0xC7(0x64)`, then the `0xC1`
+  MCU handshake. Neither is a mode selector.
+- `0xEC` is a one-shot. Its builder `sub_a815` takes two parameters (payload
+  bytes 5 and 7) but has no callers at all — direct, tail-call or via a pointer
+  table. Initialize emits it inline with `(0xC0, 0x00)`.
+
+> A reading of 24858 resyncs during one sweep looked like audio breaking frame
+> sync. It was not: the sweep had wedged the device. After a USB reset the
+> baseline is 456 frames with 1 resync. Reset before trusting any sweep result.
+
+### 10.2 The unexplored surface: `bRequest 0xC3` (GSPI)
+
+`0xC3` is a generic SPI interface — `CY3014_GSPI_INIT`, `GSPI_READ_WORD`,
+`GSPI_READ_WORD_SW`, `GSPI_WRITE_WORD`, 14 call sites — and
+`CY3014_OnControlPanelAnalysisThread` reads `wIndex 0x0006` and `0x001f` from it
+*during capture*. We had never issued it. Reading it back (vendor IN, `0xC3`,
+`wValue 0x0000`, `wIndex` = register, 2 bytes) a real register file answers:
+
+```
+0x00-0x02 0000   0x03 ff01   0x04 ffff   0x05-0x06 0000
+0x07 ff0f        0x08 ffff   0x09-0x0a 0000   0x0b ff07
+0x0c and up ffff (unmapped)
+```
+
+Twelve live registers, with the three interesting ones four apart.
+
+> **Do not write here blind.** The board carries a Winbond W25Q32JV holding the
+> FX3 boot image, and `CY3014_GSPI_*` is how this driver family reaches SPI
+> flash on other products. A wrong write corrupts the boot image and bricks the
+> device permanently — not a replug. Establish what is on the bus for PID
+> `005e` before writing anything.

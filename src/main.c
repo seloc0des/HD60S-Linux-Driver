@@ -148,6 +148,9 @@ static void run_hunt(struct hd60s_dev *d, const char *path)
 	log_info("=== hunt: %s ===", path);
 	while (fgets(line, sizeof(line), f)) {
 		unsigned long long before = d->bytes;
+		unsigned long long fr0 = g_framer.frames;
+		unsigned long long odd0 = g_framer.oddmark;
+		unsigned long long dirty0 = g_framer.blank_dirty;
 		char tmp[] = "/tmp/hd60s-huntXXXXXX";
 		char *p = strchr(line, '#');
 		int fd, i;
@@ -183,11 +186,17 @@ static void run_hunt(struct hd60s_dev *d, const char *path)
 			hd60s_pump(d, 10);
 
 		if (d->bytes > before) {
-			log_info("*** [%d] %s -> %llu BYTES ***", n, p,
-				 d->bytes - before);
+			log_info("    [%d] %s -> %llu B, +%llu frames, "
+				 "+%llu odd, +%llu dirty-blank", n, p,
+				 d->bytes - before,
+				 g_framer.frames - fr0,
+				 g_framer.oddmark - odd0,
+				 g_framer.blank_dirty - dirty0);
 		} else {
 			log_info("    [%d] %s -> nothing", n, p);
 		}
+		if (g_framer.oddmark != odd0)
+			log_info("*** [%d] NEW LINE TYPE after: %s ***", n, p);
 		if (stop)
 			break;
 	}

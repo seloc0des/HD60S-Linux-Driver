@@ -5,6 +5,8 @@
  * docs/PROTOCOL.md). --source test exercises everything downstream of the USB
  * layer so that when the protocol lands, only the input side is unproven.
  */
+#include <ctype.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +36,7 @@ static uint64_t now_ns(void)
 
 static const char *g_script;
 static const char *g_post_script;
+static const char *g_hunt;
 static int g_diagnose;
 
 /* Capture path.
@@ -99,6 +102,71 @@ static void receiver_status(struct hd60s_dev *d, int *state, char *l1, char *l2,
 	}
 }
 
+/* Try candidate actions one at a time against a live stream. Restarting the
+ * daemon per hypothesis costs ~20 s of bring-up; this costs about one second.
+ * Each line goes through the normal script interpreter via a temp file, so the
+ * whole grammar is available without duplicating the parser. */
+static void run_hunt(struct hd60s_dev *d, const char *path)
+{
+	char line[512];
+	FILE *f = fopen(path, "r");
+	int n = 0;
+
+	if (!f) {
+		log_err("cannot open hunt file %s: %s", path, strerror(errno));
+		return;
+	}
+	log_info("=== hunt: %s ===", path);
+	while (fgets(line, sizeof(line), f)) {
+		unsigned long long before = d->bytes;
+		char tmp[] = "/tmp/hd60s-huntXXXXXX";
+		char *p = strchr(line, '#');
+		int fd, i;
+		FILE *tf;
+
+		if (p)
+			*p = 0;
+		for (p = line + strlen(line); p > line && isspace((unsigned char)p[-1]); p--)
+			p[-1] = 0;
+		for (p = line; *p && isspace((unsigned char)*p); p++)
+			;
+		if (!*p)
+			continue;
+
+		fd = mkstemp(tmp);
+		if (fd < 0)
+			continue;
+		tf = fdopen(fd, "w");
+		if (!tf) {
+			close(fd);
+			unlink(tmp);
+			continue;
+		}
+		fprintf(tf, "%s\n", p);
+		fclose(tf);
+
+		n++;
+		hd60s_run_script(d, tmp);
+		unlink(tmp);
+
+		/* let it settle, then see if anything came out */
+		for (i = 0; i < 80 && !stop; i++)
+			hd60s_pump(d, 10);
+
+		if (d->bytes > before) {
+			log_info("*** [%d] %s -> %llu BYTES ***", n, p,
+				 d->bytes - before);
+		} else {
+			log_info("    [%d] %s -> nothing", n, p);
+		}
+		if (stop)
+			break;
+	}
+	fclose(f);
+	log_info("=== hunt done, %d candidate(s), %llu byte(s) total ===", n,
+		 d->bytes);
+}
+
 static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		      uint32_t fps, int seconds)
 {
@@ -153,6 +221,8 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			log_warn("iso streaming did not start; status only");
 		if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
 			log_warn("post-stream script reported errors");
+		if (g_hunt)
+			run_hunt(&dev, g_hunt);
 	}
 
 	log_info("feeding %s at %ux%u %ufps -- ctrl-c to stop", sinkspec, w, h, fps);
@@ -244,6 +314,7 @@ static void usage(const char *argv0)
 		"  --diagnose             report whether a signal is actually present\n"
 		"  --script FILE          run a bring-up script before streaming\n"
 		"  --post-script FILE     run a script AFTER SET_INTERFACE\n"
+		"  --hunt FILE            try each line in turn, watching for bytes\n"
 		"  -v                     verbose\n",
 		argv0);
 }
@@ -279,6 +350,8 @@ int main(int argc, char **argv)
 			g_script = argv[++i];
 		else if (!strcmp(argv[i], "--post-script") && i + 1 < argc)
 			g_post_script = argv[++i];
+		else if (!strcmp(argv[i], "--hunt") && i + 1 < argc)
+			g_hunt = argv[++i];
 		else if (!strcmp(argv[i], "--alt") && i + 1 < argc)
 			alt = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--seconds") && i + 1 < argc)

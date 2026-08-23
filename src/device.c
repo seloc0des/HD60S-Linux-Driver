@@ -556,7 +556,7 @@ static int parse_num(const char *s, long *out)
 
 int hd60s_run_script(struct hd60s_dev *d, const char *path)
 {
-	char line[256];
+	char line[512];
 	FILE *f = fopen(path, "r");
 	int lineno = 0, errors = 0, rc;
 
@@ -567,7 +567,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 	log_info("running bring-up script %s", path);
 
 	while (fgets(line, sizeof(line), f)) {
-		char *tok[24], *p, *save = NULL;
+		char *tok[80], *p, *save = NULL;   /* a 0xC6 arm list is 44 tokens */
 		int n = 0;
 		long a[4];
 

@@ -101,9 +101,41 @@ nothing about whether all four SuperSpeed conductors actually make contact.
 
 ## The capture daemon
 
-`hd60sd` carries the output half of the pipeline. It is finished and tested;
-the *input* half does not exist yet, because the vendor command set that starts
-a stream is undocumented.
+`hd60sd` now drives the real device. The control plane works end to end; what
+is still missing is the receiver initialisation that makes video flow.
+
+```bash
+# read-only probe: control plane + what the HDMI receiver sees
+./hd60sd --source device --script scripts/probe.hd60s --sink raw:/dev/null --seconds 1
+
+# try to capture (currently yields 0 bytes -- the receiver is not initialised)
+./hd60sd --source device --sink raw:/tmp/cap.bin --alt 2 --seconds 5
+```
+
+It opens the device, runs the MCU handshake, optionally executes a bring-up
+script, applies the vendor driver's own mode-detect test, then streams from
+endpoint 0x83 and reports packet and byte counts.
+
+### Bring-up scripts
+
+The receiver init is still being recovered from the vendor driver, so it lives
+in a text file rather than in the binary — iterating must not mean a rebuild.
+
+```
+fpga_write REG VAL                     FPGA/CPLD register file (bRequest 0xC1)
+fpga_read  REG
+i2c_write  SLAVE REG VAL               via the MCU proxy
+i2c_read   SLAVE REG
+mst_write  PAGE REG VAL                MST3367 receiver, page-selected
+mst_read   PAGE REG
+delay      MS
+poll_mst   PAGE REG MASK WANT [TRIES]
+expect_mst PAGE REG MASK WANT
+```
+
+## The synthetic path
+
+The output half is independently testable without hardware.
 
 ```bash
 # synthetic colour bars into a file, then check with ffmpeg
@@ -114,8 +146,6 @@ ffmpeg -f rawvideo -pix_fmt yuyv422 -s 1280x720 -i /tmp/test.yuv -frames:v 1 /tm
 sudo modprobe v4l2loopback
 ./hd60sd --source test --sink v4l2:/dev/video0
 
-# --source device is rejected on purpose until the protocol is known
-./hd60sd --source device
 ```
 
 Building it this way means that when the protocol does land, only the USB side

@@ -48,8 +48,8 @@ nothing until the very end.
 | `src/sink.c` | raw and v4l2loopback sinks |
 | `src/testsrc.c` | synthetic colour bars, so the sink half is testable without hardware |
 | `src/main.c` | `hd60sd` daemon |
-| `src/proto.c` | *pending* — vendor command state machine |
-| `src/stream.c` | *pending* — transfer ring, frame reassembly |
+| `src/device.c` | control primitives, handshake, iso streaming, script runner |
+| `src/device.h` | device handle + I2C slave map |
 
 The transport layer is kept behind a narrow interface on purpose: the USB 2.0
 personality uses isochronous transfers on EP 0x83 while SuperSpeed is expected

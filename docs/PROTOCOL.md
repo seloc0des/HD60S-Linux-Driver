@@ -756,7 +756,60 @@ not implemented** here:
 
 `CommandMCUReset` (`0x19e50`) is milder but still resets the MCU.
 
-### 5.11 Still unknown
+### 5.11 I2C through the MCU — the peripherals are reachable [OBSERVED — CONFIRMED ON HARDWARE]
+
+`i2c_access()` (VMA `0x19ca0`) assembles a packet whose **first byte becomes the
+MCU command**:
+
+| Slave | Form |
+|---|---|
+| `0x88`, `0x98`, `0x9c` | `wValue = 0x5000 \| slave`, payload direct |
+| anything else | `wValue = 0x5066`, slave as the first payload byte |
+
+The generic form is the one that reaches the peripheral chips:
+
+```
+write  wValue 0x5066 <- [slave|1] [count] [reg]
+read   wValue 0x5066 -> count bytes
+```
+
+`slave|1` is the I2C read address. This matches the third-party description of a
+`99 01 3b` payload for bank `0x98` register `0x3b`.
+
+#### Devices found [OBSERVED]
+
+After the handshake, scanning every even address and discarding `0xff` (idle
+bus):
+
+| Slave | reg `0x00` | Identification |
+|---|---|---|
+| `0x94` | `0x00` | regs read `00 d9 00 a0 0e 00 a0 00 60 42` |
+| `0x98` | `0x1d` | regs read `1d 02 00 …` |
+| **`0x9a`** | `0x54` | **ITE chip** — see below |
+| `0x9c` | `0x02` | regs read `02 61 f5 02 01 00 08 04 03 28` |
+| `0xa4` | `0x09` | |
+| `0xaa` | `0x33` | |
+| `0xd4` | `0x10` | |
+
+Slave `0x9a` registers `0x00`–`0x03` read **`54 49 12 16`**:
+
+| Reg | Value | Meaning |
+|---|---|---|
+| `0x00`–`0x01` | `0x4954` | vendor ID — **ITE Tech** (ASCII `"IT"`) |
+| `0x02`–`0x03` | `0x1612` | device ID — **IT6612**, matching the driver's `CIT6612` class |
+
+That is an independently verifiable identification: a chip ID read over a
+protocol we reconstructed, agreeing with both the driver's class name and the
+published teardown.
+
+`./hd60s-reg --i2c-scan` and `--i2c-dump SLAVE` do this.
+
+> **Supersedes the direct-I2C attempt.** Section 5.9 records a scan using
+> `bRequest 0xC0` with `wValue < 0x100`, which returned a constant `0x33` at
+> every address. That form is not real I2C on this device — the working path is
+> the MCU proxy above. The earlier scan was probing the wrong half of `0xC0`.
+
+### 5.12 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

@@ -88,64 +88,55 @@ static int handshake(libusb_device_handle *h)
 	return -1;
 }
 
-/* bRequest 0xC0 is the I2C bridge: wValue = slave address, wIndex = register.
- * Named by CY3014_Get/SetSlaveDeviceRegister in the vendor driver, which is by
- * far its most-used command (214 of 273 call sites). This is how the driver
- * reaches the HDMI receiver and transmitter. */
+/* I2C via the MCU proxy -- this is the path that actually works.
+ *
+ * From i2c_access() (VMA 0x19ca0): the packet's first byte becomes the MCU
+ * command. Slaves 0x88/0x98/0x9c get their own command value; everything else
+ * goes through command 0x66 with the slave as the first payload byte. The
+ * generic form is what reaches the peripheral chips:
+ *
+ *   write  wValue 0x5066 <- [slave|1] [count] [reg]
+ *   read   wValue 0x5066 -> count bytes
+ *
+ * The direct form (bRequest 0xC0 with wValue < 0x100) returns a constant and is
+ * not real I2C -- see docs/PROTOCOL.md.
+ */
 static int i2c_read(libusb_device_handle *h, uint8_t slave, uint8_t reg,
 		    uint8_t *out)
 {
+	uint8_t pkt[3] = { (uint8_t)(slave | 1), 0x01, reg };
+	int rc;
+
+	rc = libusb_control_transfer(h, RT_OUT, REQ_I2C, 0x5066, 0, pkt,
+				     sizeof(pkt), 1000);
+	if (rc != (int)sizeof(pkt))
+		return -1;
+	usleep(8000);
 	*out = 0;
-	return libusb_control_transfer(h, RT_IN, REQ_I2C, slave, reg, out, 1, 500);
+	rc = libusb_control_transfer(h, RT_IN, REQ_I2C, 0x5066, 0, out, 1, 1000);
+	return rc == 1 ? 0 : -1;
 }
 
-/* Walk even (write) addresses; odd ones are the read alias of the same chip.
- *
- * Careful with the result: a successful control transfer only means the bridge
- * accepted the request, NOT that an I2C device acknowledged. If every address
- * returns the same byte, nothing is really answering -- which is exactly what
- * this device does before the peripherals are brought up. Report that rather
- * than printing 128 false positives. */
-static void i2c_scan(libusb_device_handle *h)
+/* Dump a slave's low register space -- how you identify a chip. */
+static void i2c_dump(libusb_device_handle *h, uint8_t slave, int n)
 {
-	uint8_t val[128];
-	uint8_t got[128];
-	int slave, ok = 0, i, distinct = 0, first = -1;
+	int r;
 
-	printf("I2C scan via bRequest 0x%02x (reads only)\n", REQ_I2C);
-	memset(val, 0, sizeof(val));
-	memset(got, 0, sizeof(got));
-
-	for (slave = 0; slave <= 0xfe; slave += 2) {
+	printf("slave 0x%02x registers 0x00-0x%02x:\n", slave, n - 1);
+	for (r = 0; r < n; r++) {
 		uint8_t v;
 
-		if (i2c_read(h, (uint8_t)slave, 0x00, &v) != 1)
-			continue;
-		val[slave / 2] = v;
-		got[slave / 2] = 1;
-		if (first < 0)
-			first = v;
-		else if (v != first)
-			distinct = 1;
-		ok++;
+		if ((r % 16) == 0)
+			printf("  %02x:", r);
+		if (i2c_read(h, slave, (uint8_t)r, &v) == 0)
+			printf(" %02x", v);
+		else
+			printf(" --");
+		if ((r % 16) == 15)
+			printf("\n");
 	}
-
-	if (!ok) {
-		printf("  no address accepted a transfer\n");
-		return;
-	}
-	if (!distinct) {
-		printf("  all %d address(es) returned the identical byte 0x%02x\n",
-		       ok, first);
-		printf("  -> the bridge accepts the transfer but no I2C device is\n");
-		printf("     answering. The peripherals are not reachable yet;\n");
-		printf("     see docs/PROTOCOL.md on the 0xC0 I2C bridge.\n");
-		return;
-	}
-	for (i = 0; i < 128; i++)
-		if (got[i])
-			printf("  slave 0x%02x -> 0x%02x\n", i * 2, val[i]);
-	printf("  %d address(es) accepted, values differ -- worth a closer look\n", ok);
+	if (n % 16)
+		printf("\n");
 }
 
 /* EnableMCU() from the vendor driver (VMA 0x1a590). Same shape as the
@@ -170,14 +161,7 @@ static int enable_mcu(libusb_device_handle *h)
 	return 0;
 }
 
-/* MCU proxy. bRequest 0xC0 serves two different interfaces, distinguished by
- * wValue: below 0x100 it is direct I2C (slave address), while 0x50xx tunnels a
- * packet to the Nuvoton housekeeping MCU. From the transports at VMA 0x627f0
- * (write) and 0x62880 (read), both of which do `or di, 0x5000`.
- *
- *   write:  bmRequestType 0x40, bRequest 0xC0, wValue = 0x5000|cmd, data
- *   read:   bmRequestType 0xC0, bRequest 0xC0, wValue = 0x5000|cmd, data
- */
+/* Raw MCU proxy access (see i2c_read for the packet shape). */
 static int mcu_write(libusb_device_handle *h, uint8_t cmd, uint8_t *buf, int len)
 {
 	return libusb_control_transfer(h, RT_OUT, REQ_I2C,
@@ -193,19 +177,9 @@ static int mcu_read(libusb_device_handle *h, uint8_t cmd, uint8_t *buf, int len)
 				       (uint16_t)len, 1000);
 }
 
-/* GetMCUROMVersion() from the vendor driver (VMA 0x1c240). The packet is an
- * 0xAB preamble, a length byte, then the command.
- *
- * Two behaviours worth knowing, both established on hardware:
- *   - `33 44 55` is the "no valid reply" pattern. It comes back if you read
- *     without having written, or after a command the MCU rejects.
- *   - The reply buffer is shared, not per-command: after a successful exchange
- *     any cmd value in wValue reads the same 3 bytes back. So the reply must be
- *     read promptly, and the cmd byte on the read side proves nothing.
- *
- * The first exchange after the handshake sometimes returns the idle pattern, so
- * retry rather than reporting a spurious failure.
- */
+/* GetMCUROMVersion() (VMA 0x1c240). `33 44 55` is the no-valid-reply pattern;
+ * the reply buffer is shared rather than per-command, so read promptly. The
+ * first exchange after the handshake sometimes returns idle, hence the retry. */
 static int mcu_reply_idle(const uint8_t *r)
 {
 	return r[0] == 0x33 && r[1] == 0x44 && r[2] == 0x55;
@@ -225,7 +199,6 @@ static void mcu_version(libusb_device_handle *h)
 			return;
 		}
 		usleep(150 * 1000);
-
 		rc = mcu_read(h, 0x66, rep, sizeof(rep));
 		if (rc != (int)sizeof(rep)) {
 			log_err("MCU read failed: %s",
@@ -248,11 +221,33 @@ static void mcu_version(libusb_device_handle *h)
 		       ? "MATCH" : "different");
 }
 
+/* Walk even (write) addresses. 0xff is the idle bus -- nothing there. */
+static void i2c_scan(libusb_device_handle *h)
+{
+	int slave, hits = 0;
+
+	printf("I2C scan via the MCU proxy (reads only)\n");
+	for (slave = 0; slave <= 0xfe; slave += 2) {
+		uint8_t v;
+
+		if (i2c_read(h, (uint8_t)slave, 0x00, &v) != 0)
+			continue;
+		if (v == 0xff)
+			continue;  /* bus idle: no device acknowledged */
+		printf("  slave 0x%02x  reg 0x00 = 0x%02x\n", slave, v);
+		hits++;
+	}
+	printf("  %d device(s) responded\n", hits);
+	if (!hits)
+		printf("  (run --handshake first; the MCU must be up)\n");
+}
+
 int main(int argc, char **argv)
 {
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
 	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0, do_en = 0, do_mcuver = 0;
+	long dump_slave = -1;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -269,6 +264,9 @@ int main(int argc, char **argv)
 			scan = 0;
 		} else if (!strcmp(argv[i], "--enable-mcu")) {
 			do_en = 1;
+		} else if (!strcmp(argv[i], "--i2c-dump") && i + 1 < argc) {
+			dump_slave = strtol(argv[++i], NULL, 0);
+			scan = 0;
 		} else if (!strcmp(argv[i], "--i2c-scan")) {
 			do_i2c = 1;
 			scan = 0;
@@ -280,7 +278,8 @@ int main(int argc, char **argv)
 				"  --handshake: run the MCU-presence handshake first\n"
 				"  --enable-mcu: run EnableMCU (reg 0x39=0xC0, reg 0x34=0x40)\n"
 				"  --mcu-version: read the MCU ROM version via the MCU proxy\n"
-				"  --i2c-scan : scan I2C slaves via bRequest 0xC0 (reads only)\n"
+				"  --i2c-scan : scan I2C slaves via the MCU proxy (reads only)\n"
+				"  --i2c-dump S: dump registers 0x00-0x1f of slave S\n"
 				"  no args   : scan registers 0x00-0xff (reads only)\n"
 				"  --reg R   : read register R\n"
 				"  --write V : write V to register R (device state change)\n",
@@ -307,6 +306,13 @@ int main(int argc, char **argv)
 
 	if (do_mcuver) {
 		mcu_version(h);
+		libusb_close(h);
+		libusb_exit(ctx);
+		return 0;
+	}
+
+	if (dump_slave >= 0) {
+		i2c_dump(h, (uint8_t)dump_slave, 32);
 		libusb_close(h);
 		libusb_exit(ctx);
 		return 0;

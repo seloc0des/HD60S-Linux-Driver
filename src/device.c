@@ -322,6 +322,7 @@ void hd60s_close(struct hd60s_dev *d)
  *   mst_write  PAGE REG VAL     MST3367 receiver, page-selected
  *   mst_read   PAGE REG
  *   delay      MS
+ *   mst_rmw    PAGE REG AND OR          v = (v & AND) | OR
  *   poll_mst   PAGE REG MASK WANT [TRIES]   until (val & MASK) == WANT
  *   expect_mst PAGE REG MASK WANT           one-shot check, warns on mismatch
  *
@@ -440,6 +441,33 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 got ? "MATCH" : "TIMEOUT", i);
 			if (!got)
 				errors++;
+		} else if (!strcmp(tok[0], "mst_rmw") && n == 5) {
+			/* v = (v & AND) | OR -- the vendor init is almost all
+			 * read-modify-write, so express it directly */
+			uint8_t v = 0;
+
+			if (hd60s_mst_read(d, (uint8_t)a[0], (uint8_t)a[1], &v) < 0) {
+				log_err("%s:%d: mst_rmw read failed", path, lineno);
+				errors++;
+			} else {
+				uint8_t nv = (uint8_t)((v & (uint8_t)a[2]) | (uint8_t)a[3]);
+
+				if (hd60s_mst_write(d, (uint8_t)a[0], (uint8_t)a[1],
+						    nv) < 0) {
+					log_err("%s:%d: mst_rmw write failed",
+						path, lineno);
+					errors++;
+				} else {
+					uint8_t back = 0;
+
+					hd60s_mst_read(d, (uint8_t)a[0],
+						       (uint8_t)a[1], &back);
+					log_info("  rmw p%02lx r%02lx: %02x -> %02x%s",
+						 a[0], a[1], v, back,
+						 back == nv ? "" : " (WROTE "
+						 "DIFFERENT VALUE)");
+				}
+			}
 		} else if (!strcmp(tok[0], "expect_mst") && n == 5) {
 			uint8_t v = 0;
 

@@ -2024,3 +2024,54 @@ states the normal bring-up cannot.
 > sent this device a `0xC3` — meaning the binaries contain **no evidence at all**
 > about what is on that bus for PID `005e`. The GV7601 identification belongs to
 > a sibling SKU. Do not write there.
+
+### 10.7 The audio blocker is inside the FX3 firmware, which is unreadable
+
+After exhausting the receiver and codec side, the remaining diagnostics all point
+to the FX3, and the FX3's firmware cannot be read by any safe means we have.
+
+What the FX3 does with audio (decoded from the Windows/macOS parsers): it reads
+I2S audio into small CPU-mediated buffers and injects `FF 00 FF NN` records into
+the same outgoing stream as video. This injection is done by FX3 firmware code.
+
+Non-invasive checks, all inconclusive for the reason noted:
+
+- FX3 LPP/I2S MMIO (`0xE0000C00` block) reads `02 70 40` identically whether or
+  not our full audio config is applied. Our receiver-side config has no visible
+  effect on the FX3 control registers.
+- The bits that would actually reveal audio flow -- DMA socket byte counts, the
+  I2S-RX-active flag -- live in the high bytes of each 32-bit register, and
+  `0xA0` reads return only the low byte (see 7.8). They are unreadable.
+
+Why the firmware itself cannot be obtained:
+
+- `0xA0` RAM read: the 128 KB code region `0x40003000-0x40023000` stalls every
+  read (7.8 / 8.1).
+- MCU flash-read path: the SPI flash read primitive exists in the MCU firmware
+  (`sub_3ef8` asserts CS via GPIO then calls the bit-banged SPI engine `sub_570`
+  with opcode `0x03` = READ), and the verify command `0x41` uses it -- but
+  verify returns only ok/`0x55`, never the bytes. No host command copies raw SPI
+  flash into the reply buffer, and adding one would require reflashing the MCU,
+  which is the one brick risk this project refuses. So the FX3 image cannot be
+  dumped through the MCU either.
+
+### 10.8 Receiver audio side: confirmed complete
+
+For the record, so this is not re-tried: the entire MCU receiver-audio
+configuration has been replayed on hardware and produces no audio records.
+
+- `tbl_HwInit_audio` (`0x7600`, all 23 entries) applied verbatim, including the
+  four our bring-up had missed (`p2 0x03`, `0x21`, `0x25=0xa2`, `0x2e=0xa1`).
+- the monitor loop's `p2 0x1B` audio toggle, both `0xFF` and `0xFC`.
+- the CS42L51 codec (slave `0x94`) init sequence.
+- the full 14-record scan list, with the interrupt doorbell serviced.
+
+The MCU's on-lock writes are video-only (`p0 0xB0/0xB1/0xB2/0xB5/0xAD/0xAB` +
+CSC); there is no on-lock audio-output-enable analogous to the video `p0 0xB0`
+bit 0. The receiver audio path is init-plus-toggle, and both are done.
+
+**Definitive resolution needs a USB capture of the vendor driver during a
+working audio session** (Windows or macOS + the Elgato app + usbmon/Wireshark).
+Diffing that against our stream-start would show the exact bytes that enable
+audio -- the same method that is normally used for this class of problem. It is
+read-only and safe; it just needs the vendor software running once on any host.

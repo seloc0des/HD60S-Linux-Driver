@@ -1005,7 +1005,48 @@ not transmitting — mode-detect register `0x55` reads `0x03` (the driver's test
 wants `(v & 0x3c) == 0x3c`) and H-total reads 0. So something beyond
 sink-presentation is still required.
 
-### 5.15 Still unknown
+### 5.15 Receiver lock — horizontal achieved, vertical not [OBSERVED]
+
+`scripts/hdmi-lock.hd60s` transcribes the page-2 front-end steps of
+`MST3367_HDMI_INIT` (VMA `0x18c40`) with the canonical HPD-drop/re-lock
+sequence. After running it against a Nintendo Switch at 1080p60:
+
+| Registers | Value | Decoded | Stability |
+|---|---|---|---|
+| p0 `0x6a`/`0x6b` | `08 98` | H total = **2200** | stable across runs |
+| p2 `0x28`/`0x29` | `80 07` | H active = **1920** | stable across runs |
+| p0 `0x5b`/`0x5c` | varies | V total | **unstable** |
+| p0 `0x55` | `0x82` | validity gate wants `& 0x3c == 0x3c` | not satisfied |
+
+2200 x 1125 at 60 Hz is exactly 1080p60, and 2200/1920 cannot be measured
+without a live TMDS clock. **The source is transmitting and the receiver has
+horizontal lock.** Before any of this those registers read zero.
+
+Vertical total fluctuates run to run, so vertical sync is not locking, which is
+consistent with `0x55` never reaching `0x3c`.
+
+#### The page-0x80 clock steps make it worse
+
+`MST3367_HDMI_INIT` ends with writes to page `0x80` registers `0xCE`, `0xCF`,
+`0xD0`. Those live on page `0x80` because step `0x18d2c` sets bit 7 of the page
+register first — writing them on page `0x00` is a silent no-op, which is what
+happened on the first attempt.
+
+Applying them correctly *degraded* the lock: H total went from a stable 2200 to
+858 and V total to 1091, neither a standard mode. The `0xD0`/`0xCF` pair encodes
+a 3-bit field `{D0[1:0], CF[7]}` taken from `tbl[[dev+0x78f4] % 6]` with
+`tbl = {0x06, 0x00, ...}`; assuming index 0 gives `v = 0x06`, so `D0 |= 0x03`
+and `CF &= 0x7F`. The first attempt used the wrong OR mask (`0x00`).
+
+[UNKNOWN] Whether the correct `v` fixes it, or whether these clock settings need
+the pixel clock configured elsewhere first. `scripts/hdmi-lock.hd60s`
+deliberately omits them; `scripts/hdmi-init.hd60s` keeps the full sequence for
+comparison.
+
+[UNKNOWN] What completes vertical lock. Endpoint `0x83` remains silent
+throughout — no bytes in ~47000 isochronous packets.
+
+### 5.16 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

@@ -1236,7 +1236,62 @@ Getting past this most likely needs a `usbmon` capture of the working Windows
 driver against this exact unit, so the successful register sequence can be
 diffed against ours. Static analysis has been taken about as far as it goes.
 
-### 5.20 Still unknown
+### 5.20 CORRECTION: the receiver was never locked [OBSERVED]
+
+Earlier sections of this document, and several session reports, claimed the
+receiver had achieved horizontal lock on a live 1080p60 source, citing
+`p0 0x6a/0x6b` = 2200 and `p2 0x28/0x29` = 1920 as exact 1080p60 timing that
+"cannot be measured without a live TMDS clock".
+
+**That claim does not survive testing.** Those registers are latched or static,
+not live measurements:
+
+| Condition | H total | H active |
+|---|---|---|
+| baseline | 2200 | 1920 |
+| during TMDS/PLL reset (`p2 0x07 = 0xF4`), held 350 ms | 2200 | 1920 |
+| just after release | 2200 | 1920 |
+| **HPD de-asserted 1.5 s** (source should stop transmitting) | 2200 | 1920 |
+| HPD re-asserted 2.5 s | 2200 | 1920 |
+
+Nothing moves them. A live measurement would collapse when the TMDS clock is
+removed. Neither our scripts nor the bring-up writes `0x6a`/`0x6b` or
+`p2 0x28`/`0x29`, so these are chip-held values that happen to contain plausible
+1080p60 constants.
+
+They did change earlier in the session (`06 00` -> `ce 07`, and once `2020/1740`),
+so they are not immutable — but they do not track the source, and they are not
+evidence of lock.
+
+**Corrected status: the receiver shows no evidence of ever having locked.** Every
+independent indicator agrees and always has:
+
+| Indicator | Value |
+|---|---|
+| V total (`p0 0x5b/0x5c`) | 0 |
+| active-window engine (`p0 0xF3`-`0xFA`) | all zero |
+| `p0 0x14` (independent sync status) | `0x00` |
+| `p2 0x0E` (stream handshake) | `0x00` |
+| `p0 0x55` gate | `0x02`, wants `& 0x3C == 0x3C` |
+| `p0 0x01` bit 2 (HDMI mode) | clear |
+| ep `0x83` | 0 bytes |
+
+The earlier reading — "partial lock, horizontal good, vertical missing" — was
+wrong. There is no partial lock. There is no lock.
+
+#### What this rules out
+
+It removes the vertical-sync line of enquiry as the primary problem. A receiver
+with genuine H lock and no V lock is an unusual, specific fault; a receiver with
+nothing is the ordinary case of "no signal reaching the front end". The question
+is not *why does vertical fail* but *why does nothing arrive*.
+
+[UNKNOWN] Whether the source ever transmits into this device. We have never had
+an independent confirmation — no display was ever connected to the passthrough
+output, so every judgement about the source has come through the same
+uninitialised receiver we are trying to debug.
+
+### 5.21 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

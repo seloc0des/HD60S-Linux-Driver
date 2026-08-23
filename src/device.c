@@ -492,7 +492,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				errors++;
 		} else if (!strcmp(tok[0], "vendor_out") && n >= 4) {
 			/* vendor_out REQ WVALUE WINDEX [byte...] */
-			uint8_t data[32];
+			uint8_t data[64];
 			int nd = 0, k;
 
 			for (k = 4; k < n && nd < (int)sizeof(data); k++) {

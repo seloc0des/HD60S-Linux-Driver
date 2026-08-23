@@ -84,7 +84,8 @@ static int v4l2_open(struct hd60s_sink *s, uint32_t w, uint32_t h, uint32_t four
 	struct fd_sink *p = s->priv;
 	struct v4l2_format fmt;
 
-	p->fd = open(p->path, O_WRONLY);
+	/* v4l2loopback rejects VIDIOC_S_FMT on an O_WRONLY handle */
+	p->fd = open(p->path, O_RDWR);
 	if (p->fd < 0) {
 		log_err("open %s: %s", p->path, strerror(errno));
 		log_err("is v4l2loopback loaded?  sudo modprobe v4l2loopback");
@@ -96,11 +97,14 @@ static int v4l2_open(struct hd60s_sink *s, uint32_t w, uint32_t h, uint32_t four
 	fmt.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 	fmt.fmt.pix.width = w;
 	fmt.fmt.pix.height = h;
-	fmt.fmt.pix.pixelformat = fourcc;
+	/* identical byte layout, different name: 'YUY2' is the DirectShow
+	 * spelling, V4L2 calls it 'YUYV'. Passing ours through gets EINVAL. */
+	fmt.fmt.pix.pixelformat = (fourcc == HD60S_FOURCC_YUY2)
+					  ? V4L2_PIX_FMT_YUYV
+					  : fourcc;
 	fmt.fmt.pix.field = V4L2_FIELD_NONE;
-	fmt.fmt.pix.bytesperline = w * 2;
-	fmt.fmt.pix.sizeimage = (uint32_t)hd60s_frame_size(w, h, fourcc);
-	fmt.fmt.pix.colorspace = V4L2_COLORSPACE_SMPTE170M;
+	/* leave bytesperline/sizeimage/colorspace at 0 and let the driver
+	 * derive them -- v4l2loopback rejects the struct otherwise */
 
 	if (ioctl(p->fd, VIDIOC_S_FMT, &fmt) < 0) {
 		log_err("VIDIOC_S_FMT on %s: %s", p->path, strerror(errno));

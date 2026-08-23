@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Feed the HD60 S into a v4l2loopback device so OBS sees it as a camera.
 #
-# Until the capture path works this shows a status frame reporting what the
-# receiver actually sees -- which is more useful than a black screen while the
-# USB 3 link is still being sorted out.
+# Needs a SuperSpeed link -- the USB 2.0 personality has no bulk endpoint at
+# all, so a USB 2 cable or port cannot carry video no matter what.
+#
+# If the receiver has no signal you get a status card instead of a black
+# screen, reporting what the receiver actually sees.
 set -u
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 DEV=${DEV:-}
-SIZE=${SIZE:-1280x720}
-FPS=${FPS:-30}
+SIZE=${SIZE:-1920x1080}
+FPS=${FPS:-60}
 LABEL=${LABEL:-"Elgato HD60 S"}
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -56,5 +58,6 @@ echo "Ctrl-C here stops the feed."
 echo
 
 exec "$REPO/hd60sd" --source device \
-    --script "$REPO/scripts/vendor-bringup.hd60s" \
+    --script "$REPO/scripts/stream.hd60s" \
+    --alt 4 \
     --sink "v4l2:$DEV" --size "$SIZE" --fps "$FPS"

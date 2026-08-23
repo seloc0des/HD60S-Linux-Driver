@@ -1111,7 +1111,73 @@ unavailable below 5 Gbit/s. The USB 2.0 personality reserves iso bandwidth of
 link, or whether some further configuration would start it anyway. This cannot
 be settled from this host until the SuperSpeed link trains.
 
-### 5.18 Still unknown
+### 5.18 Corrections from the second decode pass [OBSERVED]
+
+#### `MST3367_VideoFormatDetection` is not the blocker
+
+This document previously named it as the main obstacle. That was wrong. Its real
+bounds are `0x43d20`–`0x49119` (one `.pdata` entry), and it dispatches on
+`[CDevice+0x7104]` — the registry DWORD `AnalogCrossbarVideoInputProperty`,
+which the HD60 S INF sets to 0. Values 2/3 take the analog arm at `0x43d8c`;
+0/1 take the HDMI arm at `0x47075`.
+
+**101 of its 109 paged writes are below `0x4705e` and unreachable on the HDMI
+arm.** That arm issues at most 5 writes and programs no timing at all — the
+1080p60 geometry comes from immediates (`0x780`, `0x438`) after matching the
+measured H active. So there is nothing there to transcribe.
+
+#### USB 2.0 streaming is supported by the driver
+
+The alternate-setting tier arithmetic (`0x6e73c`–`0x6e7a7`):
+
+```
+P      = width * height * fps           (default 0x76A7000 if zero)
+scaled = P + ((P * 0x0B926FAB) >> 32)
+T      = 0x3E8000     because HasSuperSpeedEndpoints (0x11990) returns 0
+                      -- no 0x30 companion descriptors on this personality
+scaled = 130,039,999 > T, and not SuperSpeed  ->  alt 2
+```
+
+Tier 3 is gated behind the SuperSpeed flag at `0x6e797`. So on a High Speed
+link the driver selects **alt 2** and proceeds — it does not refuse to stream.
+Our descriptor dump confirms alts 0/1/2 are all that exist, and `wTotalLength`
+= 73 ≤ 0x70 means the bulk/quirk path at `0x6e8e6` is never entered.
+
+**The 480M link is a quality ceiling, not a hard blocker.** This corrects 5.17,
+which named it as the prime suspect for the silent endpoints.
+
+#### `p0 0xB3` / `p2 0x27` are a mute pair
+
+The receiver's no-signal path writes `0xFF` to both (`0x1940c`, `0x1941c`); the
+success path writes `0x00` to both, in that order, as its **final** action
+(`0x48d61` then `0x48d71`) — after the interface is already on its streaming
+alt. `hd60sd --post-script` now runs the un-mute after SET_INTERFACE.
+
+#### Active-window measurement engine
+
+A signal check independent of the `0x55` gate (`0x48322`–`0x484b4`):
+
+```
+mst_write(0,0xE2,0x80); mst_write(0,0xE3,0x08); mst_write(0,0xE4,0x00)
+mst_read(0,0x6C); mst_read(0,0x6D)          # latching dummy reads
+delay ~50 ms
+read p0 0xF3..0xFA
+A=((F4&0x0F)<<8)|F3  B=((F6&0x0F)<<8)|F5
+C=((F8&0x0F)<<8)|F7  D=((FA&0x0F)<<8)|F9
+width = (B-A+1) & ~7   height = D-C+1
+mst_write(0,0xE2,0x00)                       # disarm
+```
+
+**Measured on hardware: all of `0xF3`–`0xFA` read `0x00`, giving a 0 x 1
+window.** With V total also 0, that means no DE and no vertical sync — there is
+no valid signal arriving. Earlier in the same session the same registers gave a
+clean 2200 x 1125, so the source stopped transmitting between the two
+measurements, most likely after repeated HPD cycling.
+
+This engine is the best go/no-go signal check available, because it does not
+depend on the `0x55` gate whose bit semantics are still unknown.
+
+### 5.19 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

@@ -52,6 +52,7 @@ static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
 }
 
 static const char *g_script;
+static const char *g_post_script;
 
 static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		      int seconds)
@@ -121,6 +122,13 @@ static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		goto out;
 	}
 
+	/* The un-mute pair (p0 0xB3 / p2 0x27) is the LAST thing the vendor
+	 * driver writes, after the interface is already on its streaming alt.
+	 * Doing it before SET_INTERFACE -- as the one-shot script does -- is
+	 * not the same thing. */
+	if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
+		log_warn("post-stream script reported errors; continuing");
+
 	t0 = time(NULL);
 	while (!stop && (seconds <= 0 || time(NULL) - t0 < seconds))
 		hd60s_pump(&dev, 200);
@@ -154,6 +162,7 @@ static void usage(const char *argv0)
 		"  --alt N                iso alt setting for --source device (1 or 2)\n"
 		"  --seconds N            stop after N seconds (device source)\n"
 		"  --script FILE          run a bring-up script before streaming\n"
+		"  --post-script FILE     run a script AFTER SET_INTERFACE\n"
 		"  -v                     verbose\n",
 		argv0);
 }
@@ -185,6 +194,8 @@ int main(int argc, char **argv)
 			want_frames = strtoull(argv[++i], NULL, 10);
 		else if (!strcmp(argv[i], "--script") && i + 1 < argc)
 			g_script = argv[++i];
+		else if (!strcmp(argv[i], "--post-script") && i + 1 < argc)
+			g_post_script = argv[++i];
 		else if (!strcmp(argv[i], "--alt") && i + 1 < argc)
 			alt = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--seconds") && i + 1 < argc)

@@ -1,0 +1,22 @@
+# Runs AFTER SET_INTERFACE, with URBs already in flight.
+#
+# p0 0xB3 and p2 0x27 are the receiver's mute pair: the no-signal path writes
+# 0xFF to both (0x1940c/0x1941c) and the success path writes 0x00 to both, in
+# this order, as its final action (0x48d61 then 0x48d71).
+
+# HDMI-arm front-end resync pulse -- a different bit from the 0xF4/0x04 pulse.
+mst_rmw 0x02 0x07 0xff 0x10
+mst_rmw 0x02 0x07 0xef 0x00
+delay 100
+
+# stream enable
+mst_write 0x01 0x24 0x41
+delay 50
+
+# un-mute, in the driver's order
+mst_write 0x00 0xb3 0x00
+mst_write 0x02 0x27 0x00
+delay 500
+
+mst_read 0x00 0x55
+mst_read 0x02 0x0e

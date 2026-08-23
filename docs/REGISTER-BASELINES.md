@@ -49,6 +49,13 @@ IT6612. Register `0x0e` varies between reads, so it is live status.
 
 ## MST3367 HDMI receiver — slave `0x9c`, page `0x01`
 
+> **STALE.** This dump was taken before the addressing fix in PROTOCOL.md 5.13.
+> It was captured with the generic command-`0x66` form, which silently ignores
+> page selects, so the window it shows is not page 1. Page addressing has since
+> been verified correct by writing a distinct marker to each page and reading it
+> back from all four — each page holds only its own marker. Re-capture before
+> relying on the numbers below.
+
 With a live HDMI source connected (Nintendo Switch, docked, powered on):
 
 ```

@@ -875,9 +875,41 @@ page 0x01 reg 0x18 <- 0x00, 0x02
 ```
 
 Replaying the flat list would execute contradictory writes and misconfigure the
-receiver. The control flow has to be resolved first — the branch conditions are
-device-state fields (`[dev+0x8e60]`, `[dev+0x78f0]`) that are themselves set
-elsewhere in init.
+receiver. The control flow has to be resolved first.
+
+#### Resolving the branch conditions [OBSERVED]
+
+Both fields are set in `CDevice::OnDeviceStart` from the **Windows registry**,
+each with a code default used when the value is absent — which is the normal
+case on a stock install:
+
+| Field | Registry value | Default | Set at |
+|---|---|---|---|
+| `[dev+0x8e60]` | `CustomCompanyS3Property` | **1** (`mov r15d,0x1`) | VMA `0x26b28` |
+| `[dev+0x78f0]` | `CustomAnalogVideoInputBandwidthProperty` | **0** (`xor esi,esi`) | VMA `0x25c86` |
+
+Applying the defaults to `MST3367_HwInitialize`:
+
+```
+0x427ce  cmp DWORD [rdi+0x8e60], 1     ; 1 == 1, equal
+0x427d5  jne 0x4280c                   ; NOT taken
+0x427d7  page 1 reg 0x17 = 0x00
+0x427e7  page 1 reg 0x18 = 0x00
+0x427f7  page 1 reg 0x19 = 0x00
+0x42807  jmp 0x428bd                   ; skips the whole 0x78f0 block
+```
+
+So the `0x17/0x18/0x19 = 0x02` and `= 0x01` variants never execute, and the
+three-way `0x78f0` dispatch (tested against 0, 1, 2 at `0x4280c`, `0x42845`,
+`0x4287e`) is jumped over entirely. Four of the nine conflicts collapse.
+
+That the second field is named *AnalogVideoInputBandwidth* also fits: the
+MST3367 handles both analog and HDMI inputs, and the HD60 S is HDMI-only, so the
+analog bandwidth path is dead code here.
+
+[UNKNOWN] The remaining conflicts (`page 0x00` regs `0xad`/`0xb3`/`0xb8`,
+`page 0x01` reg `0x24`, `page 0x02` regs `0x07`/`0x27`) sit behind other
+conditions not yet traced.
 
 #### Mode detection
 

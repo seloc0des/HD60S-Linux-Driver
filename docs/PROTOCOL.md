@@ -1836,3 +1836,23 @@ Two corrections that came out of doing so:
 - The `p2 0x0E` poll at `0x6E452` is a diagnostic settling wait around a
   deliberate HDCP BKSV wipe. Both loops fall through on timeout with no error
   and no state change, so that register was never gating the datapath.
+
+### 9.8 CPLD reads must use the proxy form, not the raw form
+
+The MCU's raw pass-through for slaves `0x88`, `0x98` and `0x9C`
+(`wValue = 0x5000 | slave`) is **write-only**: the handler sets the reply length
+to zero, so a following IN returns the MCU's stale TX preset `33 44 55` rather
+than register data. Anything reading the CPLD that way is reading a constant.
+
+Ours does not. `hd60s_cpld_read` goes through the generic proxy
+(`wValue 0x5066`, payload `[slave|1, count, reg]`) and only `hd60s_cpld_write`
+uses the raw form, which is what that form is for. Two independent checks
+confirm the reads are real rather than a fixed preset:
+
+- write/readback tracks: `0x20 = 0x05` reads `0x05`, and after `|= 0x10` it
+  reads `0x15`
+- `0xF0` reads `0x54`, which is precisely the value the vendor's own CPLD
+  watchdog compares against before re-running the MCU handshake
+
+So the survey in 7.6 stands: nine live registers, four of them ASCII `TEST`,
+none of them reacting to video.

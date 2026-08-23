@@ -1796,3 +1796,43 @@ sustained 73 MB/s, dropped most of the stream, and — because the drops broke
 continuity — the frame period could not be measured at all. 32 URBs of 256 KB
 fixed it. If frame periodicity ever looks absent again, suspect the queue depth
 before suspecting the device.
+
+### 9.6 Why we use alt 4 (bulk) and the vendor usually does not
+
+The Windows driver picks its alternate setting from a width x height x fps
+bandwidth formula and, for 1080p60 on a normal Intel/AMD/Renesas xHCI, selects
+**alt 2** — isochronous, 32768 B/uframe. It reaches alt 4 (bulk) only for a
+hard-coded host-controller blacklist (ASMedia `1b21:1042/1142/1242`, Etron
+`1b6f:7023`, VIA `1106:3432`) or a registry override. There is also a
+descending alt-4-to-0 retry loop in `CUSBBaseDevice::CreatePipe`, but it only
+fires if the interface is still on alt 0.
+
+We use alt 4 by default anyway, because on Linux it is simply better:
+
+- bulk is lossless and flow-controlled, so a late URB costs latency, not pixels
+- it needs no bandwidth reservation, so it cannot fail to start because some
+  other device already booked the bus
+- measured: 4168 frames in 70 s (59.5 fps), 18 GB, one resync at startup
+
+`--alt N` still selects any of 1, 2, 3 (isochronous) or 4 (bulk); the driver
+reads the active config descriptor and submits the right transfer type either
+way, so neither personality is hard-coded.
+
+### 9.7 Caveat: the shipped PDB does not match the shipped SYS
+
+`CY3014.X64.PDB` and `CY3014.X64.SYS` in the vendor package have **mismatched
+GUIDs**, and symbol addresses drift by up to `0x1A0`. Several confident-looking
+conclusions earlier in this project came from reading a symbol name at an
+address that belongs to a different function.
+
+If you need exact addresses, `MZ0380.X64.PDB` matches `eMZ0380.X64.SYS`
+byte-for-byte and carries the same MST3367 source. Prefer it.
+
+Two corrections that came out of doing so:
+
+- `p1 0x24`/`0x25`/`0x26`/`0x27` is a key/EDID RAM block (control, address,
+  address, auto-incrementing data), **not** a stream enable. Its running value
+  is `0x40`; `0x41` is the "disabled" state.
+- The `p2 0x0E` poll at `0x6E452` is a diagnostic settling wait around a
+  deliberate HDCP BKSV wipe. Both loops fall through on timeout with no error
+  and no state change, so that register was never gating the datapath.

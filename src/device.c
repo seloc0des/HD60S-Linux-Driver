@@ -137,6 +137,27 @@ int hd60s_cpld_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out)
 	return hd60s_i2c_read(d, HD60S_SLAVE_CPLD, reg, out);
 }
 
+/* Raw MST3367 access that does NOT re-select the page.
+ *
+ * Needed because MST3367_HDMI_INIT read-modify-writes register 0x00 -- the page
+ * register itself -- to set bit 7, and that bit must stay set across the
+ * following 0xCE/0xCF writes. Any helper that re-selects the page first
+ * destroys the hold, which is exactly what hd60s_mst_write does.
+ */
+int hd60s_mst_raw_write(struct hd60s_dev *d, uint8_t reg, uint8_t val)
+{
+	uint8_t pkt[2] = { reg, val };
+	int rc = hd60s_mcu_write(d, HD60S_SLAVE_MST3367, pkt, sizeof(pkt));
+
+	usleep(8000);
+	return rc;
+}
+
+int hd60s_mst_raw_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out)
+{
+	return hd60s_i2c_read(d, HD60S_SLAVE_MST3367, reg, out);
+}
+
 /* Hot-plug detect toward the source: page 0 register 0xB7 bit 1.
  * The DDC/EDID path is gated by this -- the EDID EEPROM at slave 0xa0 only
  * appears on the bus once HPD is asserted. */
@@ -344,6 +365,8 @@ void hd60s_close(struct hd60s_dev *d)
  *   mst_read   PAGE REG
  *   delay      MS
  *   vendor_out REQ WVAL WIDX [bytes...]   raw vendor OUT on EP0
+ *   mst_raw    REG VAL          MST3367 write WITHOUT re-selecting the page
+ *   mst_rawrmw REG AND OR       ditto, read-modify-write
  *   cpld_write REG VAL          Altera MAX II CPLD (I2C slave 0x98)
  *   cpld_read  REG
  *   cpld_rmw   REG AND OR
@@ -497,6 +520,22 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 rc >= 0 ? "ok" : libusb_error_name(rc));
 			if (rc < 0)
 				errors++;
+		} else if (!strcmp(tok[0], "mst_raw") && n == 3) {
+			if (hd60s_mst_raw_write(d, (uint8_t)a[0], (uint8_t)a[1]) < 0) {
+				log_err("%s:%d: mst_raw rejected", path, lineno);
+				errors++;
+			}
+		} else if (!strcmp(tok[0], "mst_rawrmw") && n == 4) {
+			uint8_t v = 0;
+
+			if (hd60s_mst_raw_read(d, (uint8_t)a[0], &v) == 0) {
+				uint8_t nv = (uint8_t)((v & (uint8_t)a[1]) | (uint8_t)a[2]);
+
+				hd60s_mst_raw_write(d, (uint8_t)a[0], nv);
+				log_info("  raw rmw r%02lx: %02x -> %02x", a[0], v, nv);
+			} else {
+				errors++;
+			}
 		} else if (!strcmp(tok[0], "cpld_write") && n == 3) {
 			if (hd60s_cpld_write(d, (uint8_t)a[0], (uint8_t)a[1]) < 0) {
 				log_err("%s:%d: cpld_write rejected", path, lineno);

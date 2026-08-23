@@ -1177,7 +1177,66 @@ measurements, most likely after repeated HPD cycling.
 This engine is the best go/no-go signal check available, because it does not
 depend on the `0x55` gate whose bit semantics are still unknown.
 
-### 5.19 Still unknown
+### 5.19 The vertical-lock wall [OBSERVED]
+
+With a live Nintendo Switch at 1080p60 and the full reconstructed bring-up
+applied — including the corrections below — the receiver reaches a stable,
+reproducible, *partial* lock:
+
+| Measurement | Value | Verdict |
+|---|---|---|
+| p0 `0x6a`/`0x6b` | `08 98` = **2200** | exact 1080p60 H total |
+| p2 `0x28`/`0x29` | `80 07` = **1920** | exact 1080p60 H active |
+| p0 `0x5b`/`0x5c` | `00 00` | **V total absent** |
+| active-window engine | `0 x 1` | **no DE** |
+| p0 `0x14` | `0x00` | independent sync-status byte: nothing |
+| p0 `0x55` | `0x02` | gate wants `(v & 0x3C) == 0x3C` |
+| p2 `0x0E` | `0x00` | stream-open handshake waits for `& 0x07` — times out |
+| ep `0x83` | 0 bytes / ~63000 packets | silent |
+
+Horizontal timing is measured *exactly* right, so the front end is locked to the
+pixel clock and line rate. Vertical sync and data-enable are entirely absent.
+
+#### Ruled out
+
+- **`p0 0x0E` bit 3** would make `0x5b`/`0x5c` report sync *width* rather than V
+  total. Measured `0x40` — bit clear. Not the cause.
+- **`p0 0x54` bit 4** is clear (`0x20`), which is correct.
+- **`MST3367_VideoFormatDetection`** — 101 of its 109 writes are unreachable on
+  the HDMI arm (5.18).
+- **The USB 2.0 link** — the tier arithmetic selects alt 2 and proceeds (5.18).
+
+#### A structural bug this exposed
+
+`MST3367_HDMI_INIT` step 7 is a read-modify-write of register `0x00` — the
+**page register itself** — setting bit 7, and that bit must stay set across the
+following `0xCE`/`0xCF` writes (`0x18D11`–`0x18D8E`).
+
+`hd60s_mst_write(page, reg, val)` re-selects the page before every access, so it
+*destroys the hold* and can never reproduce this. `hd60s_mst_raw_write/read` and
+the `mst_raw` / `mst_rawrmw` script ops exist for exactly this case. Fixing it
+made the sequence execute correctly — but did not change the lock state.
+
+#### What is genuinely still unknown
+
+The decode passes were explicit about their own limits, and these are the gaps:
+
+- **The bit semantics of `p0 0x55`.** Not derivable from the binary — the driver
+  only ever tests `& 0x3C`, never assigns meaning to individual bits.
+- **`bRequest 0xC2`.** A zero-length OUT issued unconditionally with its result
+  discarded; no other driver in the package uses it and the PDB has no name for
+  it. Semantics undeterminable from this image.
+- **The `0xEC` 10-byte payload.** `B8 22 ?? ?? ?? C0 ?? 00 ?? CA`, with five
+  bytes left as uninitialised stack by the vendor driver. Structure unknown.
+- **The EDID upload inside `CY3014_SetStartTechEDID`** — payloads assembled at
+  runtime, not decoded. Judged not to be the blocker since the source does
+  transmit, but it is a real gap in the replay.
+
+Getting past this most likely needs a `usbmon` capture of the working Windows
+driver against this exact unit, so the successful register sequence can be
+diffed against ours. Static analysis has been taken about as far as it goes.
+
+### 5.20 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

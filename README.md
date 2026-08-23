@@ -75,6 +75,29 @@ Note that a cable being sold as "USB 3.0", or having a coloured insert, says
 nothing about whether all four SuperSpeed conductors actually make contact.
 `not attached` is a measurement; the label is a claim.
 
+## The capture daemon
+
+`hd60sd` carries the output half of the pipeline. It is finished and tested;
+the *input* half does not exist yet, because the vendor command set that starts
+a stream is undocumented.
+
+```bash
+# synthetic colour bars into a file, then check with ffmpeg
+./hd60sd --source test --frames 90 --sink raw:/tmp/test.yuv
+ffmpeg -f rawvideo -pix_fmt yuyv422 -s 1280x720 -i /tmp/test.yuv -frames:v 1 /tmp/f.png
+
+# straight into a v4l2loopback node, so OBS/ffmpeg/browsers see a camera
+sudo modprobe v4l2loopback
+./hd60sd --source test --sink v4l2:/dev/video0
+
+# --source device is rejected on purpose until the protocol is known
+./hd60sd --source device
+```
+
+Building it this way means that when the protocol does land, only the USB side
+is unproven -- the frame plumbing, pixel format and v4l2 path are already
+known good.
+
 ## Safety
 
 The device boots from unprotected SPI flash, so a stray vendor write can brick

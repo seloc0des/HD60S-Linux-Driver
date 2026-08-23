@@ -19,10 +19,11 @@ UDEVDIR ?= /etc/udev/rules.d
 COMMON  := src/util.o
 PROBE   := hd60s-probe
 DUMP    := hd60s-dumpram
+DAEMON  := hd60sd
 
 .PHONY: all clean install uninstall install-udev check-deps
 
-all: check-deps $(PROBE) $(DUMP)
+all: check-deps $(PROBE) $(DUMP) $(DAEMON)
 
 check-deps:
 	@pkg-config --exists libusb-1.0 || { \
@@ -41,6 +42,10 @@ $(PROBE): tools/hd60s-probe.o $(COMMON)
 $(DUMP): tools/hd60s-dumpram.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
+# no libusb needed yet -- the capture half isn't wired up
+$(DAEMON): src/main.o src/sink.o src/testsrc.o $(COMMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
 # udev rule lets the logged-in desktop user talk to the device without sudo.
 install-udev:
 	install -m 0644 udev/99-elgato-hd60s.rules $(UDEVDIR)/99-elgato-hd60s.rules
@@ -50,6 +55,7 @@ install-udev:
 install: all install-udev
 	install -m 0755 $(PROBE) $(BINDIR)/$(PROBE)
 	install -m 0755 $(DUMP) $(BINDIR)/$(DUMP)
+	install -m 0755 $(DAEMON) $(BINDIR)/$(DAEMON)
 	install -m 0755 tools/hd60s-descdump.py $(BINDIR)/hd60s-descdump
 	install -m 0755 tools/hd60s-watch.sh $(BINDIR)/hd60s-watch
 	install -m 0755 tools/hd60s-linkcheck.py $(BINDIR)/hd60s-linkcheck
@@ -61,4 +67,4 @@ uninstall:
 	udevadm control --reload-rules
 
 clean:
-	rm -f $(PROBE) $(DUMP) src/*.o tools/*.o
+	rm -f $(PROBE) $(DUMP) $(DAEMON) src/*.o tools/*.o

@@ -44,6 +44,10 @@ nothing until the very end.
 | `tools/hd60s-descdump.py` | sysfs descriptor decode; no deps, works unprivileged |
 | `tools/hd60s-watch.sh` | polls for enumeration, snapshots descriptors + BOS |
 | `tools/hd60s-probe.c` | read-only RE probe (see safety note below) |
+| `src/frame.h` | frame struct + sink interface; protocol-agnostic by design |
+| `src/sink.c` | raw and v4l2loopback sinks |
+| `src/testsrc.c` | synthetic colour bars, so the sink half is testable without hardware |
+| `src/main.c` | `hd60sd` daemon |
 | `src/proto.c` | *pending* — vendor command state machine |
 | `src/stream.c` | *pending* — transfer ring, frame reassembly |
 

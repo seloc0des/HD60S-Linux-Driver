@@ -133,6 +133,24 @@ poll_mst   PAGE REG MASK WANT [TRIES]
 expect_mst PAGE REG MASK WANT
 ```
 
+## Using it with OBS
+
+```bash
+sudo apt install v4l2loopback-dkms v4l-utils    # once
+./scripts/obs-start.sh
+```
+
+Then in OBS: **Sources -> + -> Video Capture Device (V4L2)** and pick the
+`Elgato HD60 S` device. Restart OBS first if it was already running, so it
+rescans.
+
+Until the capture path works (see [docs/PROTOCOL.md](docs/PROTOCOL.md) 5.23) the
+feed shows a colour-coded status frame reporting what the receiver actually
+sees -- red for no signal, amber for a locked signal with no data yet, green
+once bytes flow -- along with the measured timing. That is considerably more
+useful than a black screen while the USB 3 link is being sorted out, and it
+turns into real video the moment the endpoint delivers.
+
 ## The synthetic path
 
 The output half is independently testable without hardware.

@@ -50,4 +50,9 @@ struct hd60s_sink *hd60s_sink_create(const char *spec);
  * visible by eye and the frame counter is readable in the output. */
 void hd60s_testsrc_fill(struct hd60s_frame *f);
 
+/* Status frame for the v4l2 output when the device is not delivering video.
+ * state: 0 = no signal, 1 = receiver locked but no data, 2 = streaming. */
+void hd60s_statusframe_fill(struct hd60s_frame *f, int state, const char *l1,
+			    const char *l2, const char *l3);
+
 #endif /* HD60S_FRAME_H */

@@ -62,7 +62,7 @@ $(REGPROBE): tools/hd60s-regprobe.o $(COMMON)
 $(REG): tools/hd60s-reg.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
-$(DAEMON): src/main.o src/sink.o src/testsrc.o src/device.o $(COMMON)
+$(DAEMON): src/main.o src/sink.o src/testsrc.o src/statusframe.o src/device.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
 # udev rule lets the logged-in desktop user talk to the device without sudo.

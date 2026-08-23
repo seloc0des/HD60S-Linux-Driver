@@ -32,190 +32,162 @@ static uint64_t now_ns(void)
 	return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
 }
 
-/* Raw capture path. The stream framing is not yet known, so bytes go to the
- * sink verbatim -- enough to see whether anything arrives at all, and to
- * capture material for working the framing out. */
-static struct hd60s_sink *g_sink;
-static unsigned long long g_written;
-
-static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
-{
-	struct hd60s_frame f;
-
-	(void)d;
-	if (!g_sink)
-		return;
-	memset(&f, 0, sizeof(f));
-	f.data = (uint8_t *)buf;
-	f.size = (size_t)len;
-	if (g_sink->write(g_sink, &f) == 0)
-		g_written += (unsigned long long)len;
-}
-
-/* Signal presence, reported plainly.
- *
- * Every judgement in this project has to come through the receiver, so it is
- * worth being explicit about what is actually observable. The test that matters
- * is not any single register but whether anything TRACKS the source: static
- * values prove nothing, because several timing registers hold plausible
- * constants whether or not a clock is present (docs/PROTOCOL.md 5.20).
- */
-static int diagnose(struct hd60s_dev *d)
-{
-	uint8_t hi0e = 0, hi0f = 0, lo0e = 0, lo0f = 0;
-	uint8_t v55 = 0, v14 = 0, vt_hi = 0, vt_lo = 0;
-	int vtotal;
-
-	log_info("--- signal diagnosis ---");
-
-	hd60s_set_hpd(d, 1);
-	sleep(2);
-	hd60s_mst_read(d, 0x02, 0x0e, &hi0e);
-	hd60s_mst_read(d, 0x02, 0x0f, &hi0f);
-	hd60s_mst_read(d, 0x00, 0x55, &v55);
-	hd60s_mst_read(d, 0x00, 0x14, &v14);
-	hd60s_mst_read(d, 0x00, 0x5b, &vt_hi);
-	hd60s_mst_read(d, 0x00, 0x5c, &vt_lo);
-	vtotal = ((vt_hi & 0x07) << 8) | vt_lo;
-
-	hd60s_set_hpd(d, 0);
-	sleep(2);
-	hd60s_mst_read(d, 0x02, 0x0e, &lo0e);
-	hd60s_mst_read(d, 0x02, 0x0f, &lo0f);
-	hd60s_set_hpd(d, 1);
-
-	printf("\n  HPD asserted   : p2 0x0e=%02x  p2 0x0f=%02x\n", hi0e, hi0f);
-	printf("  HPD de-asserted: p2 0x0e=%02x  p2 0x0f=%02x\n", lo0e, lo0f);
-	printf("  p0 0x55=%02x (gate wants & 0x3c == 0x3c)   p0 0x14=%02x\n",
-	       v55, v14);
-	printf("  V total        : %d\n\n", vtotal);
-
-	if (hi0e == lo0e && hi0f == lo0f) {
-		printf("  VERDICT: the receiver does not even see our HPD change.\n");
-		printf("           The control path is not reaching the front end.\n");
-		return 1;
-	}
-	if ((hi0e & 0x07) == 0 && vtotal == 0 && (v55 & 0x3c) != 0x3c) {
-		printf("  VERDICT: NO SIGNAL.\n");
-		printf("           HPD reaches the hardware (p2 0x0e/0x0f track it),\n");
-		printf("           but no TMDS clock arrives and V total is 0.\n\n");
-		printf("           The overwhelmingly likely cause is that the source\n");
-		printf("           is not transmitting -- e.g. a console asleep. A\n");
-		printf("           sleeping console emits nothing and will NOT wake\n");
-		printf("           from an HDMI hot-plug event.\n\n");
-		printf("           Wake the source, then re-run. To confirm\n");
-		printf("           independently, put any display on this device's\n");
-		printf("           HDMI OUTPUT: if it stays dark, the source is the\n");
-		printf("           problem, not this driver.\n");
-		return 1;
-	}
-	printf("  VERDICT: SIGNAL PRESENT -- V total=%d, gate 0x55=%02x %s.\n",
-	       vtotal, v55, (v55 & 0x3c) == 0x3c ? "PASSES" : "fails");
-	printf("           Receiver bring-up can be validated against it.\n");
-	return 0;
-}
-
 static const char *g_script;
 static const char *g_post_script;
 static int g_diagnose;
 
-static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
-		      int seconds)
+/* Capture path.
+ *
+ * The device does not deliver video yet (docs/PROTOCOL.md 5.23), so rather than
+ * hand the sink nothing -- which shows up in OBS as a dead camera -- we run a
+ * proper frame loop and emit a status frame reporting what the receiver
+ * actually sees. The moment bytes appear on the endpoint they take over.
+ */
+static struct hd60s_sink *g_sink;
+static uint8_t *g_accum;          /* frame under construction from iso data */
+static size_t g_accum_len, g_frame_sz;
+static volatile int g_frame_ready;
+static unsigned long long g_dev_bytes;
+
+static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
+{
+	(void)d;
+	g_dev_bytes += (unsigned long long)len;
+	if (!g_accum || g_frame_ready)
+		return;
+	if (g_accum_len + (size_t)len > g_frame_sz)
+		len = (int)(g_frame_sz - g_accum_len);
+	if (len <= 0)
+		return;
+	memcpy(g_accum + g_accum_len, buf, (size_t)len);
+	g_accum_len += (size_t)len;
+	if (g_accum_len >= g_frame_sz)
+		g_frame_ready = 1;
+}
+
+/* Ask the receiver what it sees; cheap enough to poll once a second. */
+static void receiver_status(struct hd60s_dev *d, int *state, char *l1, char *l2,
+			    char *l3, size_t n)
+{
+	uint8_t v55 = 0, hi = 0, lo = 0, hhi = 0, hlo = 0;
+	int vtotal, htotal, locked;
+
+	hd60s_mst_read(d, 0x00, 0x55, &v55);
+	hd60s_mst_read(d, 0x00, 0x5b, &hi);
+	hd60s_mst_read(d, 0x00, 0x5c, &lo);
+	hd60s_mst_read(d, 0x00, 0x6a, &hhi);
+	hd60s_mst_read(d, 0x00, 0x6b, &hlo);
+	vtotal = ((hi & 0x07) << 8) | lo;
+	htotal = ((hhi & 0x0f) << 8) | hlo;
+	locked = (v55 & 0x3c) == 0x3c;
+
+	if (g_dev_bytes) {
+		*state = 2;
+		snprintf(l1, n, "STREAMING");
+		snprintf(l2, n, "%llu BYTES", g_dev_bytes);
+		l3[0] = '\0';
+	} else if (locked) {
+		*state = 1;
+		snprintf(l1, n, "SIGNAL LOCKED");
+		snprintf(l2, n, "%d X %d TOTAL", htotal, vtotal);
+		snprintf(l3, n, "NO DATA - NEEDS USB 3 LINK");
+	} else {
+		*state = 0;
+		snprintf(l1, n, "NO SIGNAL");
+		snprintf(l2, n, "GATE 55 %02X", v55);
+		snprintf(l3, n, "CHECK SOURCE IS AWAKE");
+	}
+}
+
+static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
+		      uint32_t fps, int seconds)
 {
 	struct hd60s_dev dev;
-	uint8_t v = 0;
-	int rc = 0;
-	time_t t0;
+	struct hd60s_frame f;
+	char l1[48], l2[48], l3[48];
+	int state = 0, rc = 0;
+	uint64_t period, next;
+	time_t t0, last_poll = 0;
 
-	(void)max_frames;
 	if (hd60s_open(&dev) < 0)
 		return 1;
-
 	if (hd60s_handshake(&dev) < 0) {
 		log_err("MCU handshake failed -- cannot reach the receiver");
 		hd60s_close(&dev);
 		return 1;
 	}
-
-	/* HPD gates the DDC path: assert it so the source sees a sink. */
 	hd60s_set_hpd(&dev, 1);
-	{
-		uint8_t edid[128];
-
-		if (hd60s_read_edid(&dev, edid, sizeof(edid)) == 0 &&
-		    edid[0] == 0x00 && edid[1] == 0xff) {
-			unsigned sum = 0;
-			int i;
-
-			for (i = 0; i < 128; i++)
-				sum += edid[i];
-			log_info("EDID present: %c%c%c product 0x%04x, checksum %s",
-				 '@' + ((edid[8] >> 2) & 0x1f),
-				 '@' + (((edid[8] & 3) << 3) | (edid[9] >> 5)),
-				 '@' + (edid[9] & 0x1f),
-				 edid[10] | (edid[11] << 8),
-				 (sum & 0xff) == 0 ? "ok" : "BAD");
-		} else {
-			log_warn("no valid EDID readable -- the source may refuse to output");
-		}
-	}
-
-	if (g_diagnose) {
-		diagnose(&dev);
-		hd60s_close(&dev);
-		return 0;
-	}
 
 	if (g_script && hd60s_run_script(&dev, g_script) < 0)
-		log_warn("bring-up script reported errors; continuing anyway");
+		log_warn("bring-up script reported errors; continuing");
 
-	/* Report what the receiver thinks, using the vendor driver's own test:
-	 * MST3367_HDMI_MODE_DETECT checks (page-reg 0x55 & 0x3c) == 0x3c. */
-	if (hd60s_mst_read(&dev, 0x00, 0x55, &v) == 0)
-		log_info("MST3367 reg 0x55 = 0x%02x -> HDMI mode %s", v,
-			 (v & 0x3c) == 0x3c ? "DETECTED" : "not detected");
-
-	g_sink = hd60s_sink_create(sinkspec);
-	if (!g_sink) {
+	memset(&f, 0, sizeof(f));
+	f.width = w; f.height = h; f.fourcc = HD60S_FOURCC_YUY2;
+	f.size = g_frame_sz = hd60s_frame_size(w, h, f.fourcc);
+	f.data = calloc(1, f.size);
+	g_accum = calloc(1, f.size);
+	if (!f.data || !g_accum) {
+		log_err("cannot allocate frames");
 		hd60s_close(&dev);
 		return 1;
 	}
-	/* raw byte stream: the sink's format arguments are advisory here */
-	if (g_sink->open(g_sink, 0, 0, HD60S_FOURCC_YUY2) < 0) {
-		g_sink->close(g_sink);
+
+	g_sink = hd60s_sink_create(sinkspec);
+	if (!g_sink || g_sink->open(g_sink, w, h, f.fourcc) < 0) {
+		if (g_sink) g_sink->close(g_sink);
+		free(f.data); free(g_accum);
 		hd60s_close(&dev);
 		return 1;
 	}
 
 	dev.on_data = on_iso_data;
-	if (hd60s_stream_start(&dev, alt) < 0) {
-		rc = 1;
-		goto out;
-	}
-
-	/* The un-mute pair (p0 0xB3 / p2 0x27) is the LAST thing the vendor
-	 * driver writes, after the interface is already on its streaming alt.
-	 * Doing it before SET_INTERFACE -- as the one-shot script does -- is
-	 * not the same thing. */
+	if (hd60s_stream_start(&dev, alt) < 0)
+		log_warn("iso streaming did not start; emitting status only");
 	if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
-		log_warn("post-stream script reported errors; continuing");
+		log_warn("post-stream script reported errors");
 
+	log_info("feeding %s at %ux%u %ufps -- ctrl-c to stop", sinkspec, w, h, fps);
+	period = 1000000000ull / (fps ? fps : 60);
+	next = now_ns();
 	t0 = time(NULL);
-	while (!stop && (seconds <= 0 || time(NULL) - t0 < seconds))
-		hd60s_pump(&dev, 200);
+
+	while (!stop && (seconds <= 0 || time(NULL) - t0 < seconds)) {
+		uint64_t t;
+
+		hd60s_pump(&dev, 5);
+
+		if (time(NULL) != last_poll) {
+			last_poll = time(NULL);
+			receiver_status(&dev, &state, l1, l2, l3, sizeof(l1));
+		}
+
+		if (g_frame_ready) {
+			memcpy(f.data, g_accum, f.size);
+			g_accum_len = 0;
+			g_frame_ready = 0;
+		} else {
+			hd60s_statusframe_fill(&f, state, l1, l2, l3);
+		}
+		f.seq++;
+		f.ts_ns = now_ns();
+		if (g_sink->write(g_sink, &f) < 0) {
+			rc = 1;
+			break;
+		}
+
+		next += period;
+		t = now_ns();
+		if (next > t)
+			usleep((useconds_t)((next - t) / 1000));
+		else
+			next = t;
+	}
 
 	hd60s_stream_stop(&dev);
 	log_info("iso packets %llu, with data %llu, bytes %llu",
 		 dev.pkts, dev.nonempty, dev.bytes);
-	if (!dev.nonempty)
-		log_warn("no data on ep 0x%02x -- the video path is not enabled yet",
-			 HD60S_EP_STREAM_ISO);
-	else
-		log_info("wrote %llu byte(s) to %s", g_written, sinkspec);
-
-out:
 	g_sink->close(g_sink);
-	g_sink = NULL;
+	free(f.data); free(g_accum);
 	hd60s_close(&dev);
 	return rc;
 }
@@ -290,8 +262,7 @@ int main(int argc, char **argv)
 	}
 
 	if (!strcmp(source, "device"))
-		return run_device(sinkspec, alt, want_frames ? want_frames : 0,
-				  seconds);
+		return run_device(sinkspec, alt, w, h, fps, seconds);
 	if (strcmp(source, "test")) {
 		log_err("unknown --source '%s'", source);
 		return 2;

@@ -597,13 +597,53 @@ before the MCU check:
 The `0xEC` payload is only partially recovered — several bytes of the 10-byte
 buffer are not written in the visible basic block. [UNKNOWN]
 
-#### Other request codes seen in the driver
+#### The full command surface [OBSERVED]
 
-| bRequest | Role |
-|---|---|
-| `0xC1` | register read/write (above) |
-| `0xC5`, `0xC6` | MCU access, used by `CY3014_MCU_Exist` |
-| `0xA0` | EZ-USB data (`CY3014_Get/SetEzusbData`) — the 255-byte window in 5.1 |
+`tools/vendor-cmdmap.py` finds every call to `SendVendorCommandRequest` in the
+driver and recovers whichever arguments are constants. 273 call sites:
+
+| bRequest | Sites | Role (from the symbols at each site) |
+|---|---|---|
+| `0xC0` | 214 | **I2C bridge** — `Get/SetSlaveDeviceRegister`, `SlaveDeviceBytes`. `wValue` = slave address, `wIndex` = register |
+| `0xC1` | 33 | **FPGA/CPLD registers** — `Get/SetFpgaRegister`, `GSPI_*` |
+| `0xC3` | 14 | GSPI word transfers |
+| `0xC2` | 2 | init path, `CY3014_HwInitialize` |
+| `0xC5` | 2 | MCU access, `CY3014_MCU_Exist` / `HwInitialize` |
+| `0xA0` | 2 | EZ-USB data — the 255-byte window in 5.1 |
+
+This refines 5.9: `0xC1` is not the general register interface, it is
+specifically the FPGA/CPLD register file. The workhorse is `0xC0`, the I2C
+bridge to the peripheral chips — the HDMI receiver, transmitter and clock
+generator all hang off it.
+
+`CY3014_GetSlaveDeviceRegister` (VMA `0x62ba0`) confirms the mapping:
+
+```
+movzx r9d, r8b      ; wIndex = register
+movzx r8d, dl       ; wValue = slave address
+mov   dl,  0xc0     ; bRequest
+mov   DWORD [rsp+0x28], 1   ; one byte
+mov   BYTE  [rsp+0x30], 1   ; IN
+```
+
+#### The I2C bridge answers, but nothing is behind it yet [OBSERVED]
+
+Reading register `0x00` from every even slave address `0x00`–`0xFE`, after the
+handshake, returns **`0x33` every time** — and reading registers `0x00`–`0x0F`
+from candidate HDMI addresses (`0x90`, `0x92`, `0x98`, `0x9A`, `0xB0`) also
+returns `0x33` for all of them.
+
+A successful control transfer here only means the *bridge* accepted the request;
+it is not an I2C ACK. A constant reply across every address and register means
+no peripheral is actually answering — the chips are presumably unpowered or the
+I2C master is not enabled yet.
+
+[UNKNOWN] What brings them up. Candidates from the symbol table:
+`CY3014_PowerDownPeripherals` (and its inverse), `EnableMCU`, and
+`CDevice::OnSetCustomDebugMcuAccessEnableProperty`.
+
+`./hd60s-reg --i2c-scan` performs this and reports the uniform-reply case
+explicitly rather than printing 128 false positives.
 
 ### 5.10 Still unknown
 

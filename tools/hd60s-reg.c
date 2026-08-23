@@ -23,7 +23,8 @@
 
 #include "../src/hd60s.h"
 
-#define REQ_REG 0xC1
+#define REQ_REG 0xC1   /* FPGA/CPLD register file */
+#define REQ_I2C 0xC0   /* I2C bridge to the peripheral chips */
 #define RT_IN (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN | LIBUSB_RECIPIENT_DEVICE)
 #define RT_OUT (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT | LIBUSB_RECIPIENT_DEVICE)
 
@@ -87,11 +88,62 @@ static int handshake(libusb_device_handle *h)
 	return -1;
 }
 
+/* bRequest 0xC0 is the I2C bridge: wValue = slave address, wIndex = register.
+ * Named by CY3014_Get/SetSlaveDeviceRegister in the vendor driver, which is by
+ * far its most-used command (214 of 273 call sites). This is how the driver
+ * reaches the HDMI receiver and transmitter. */
+static int i2c_read(libusb_device_handle *h, uint8_t slave, uint8_t reg,
+		    uint8_t *out)
+{
+	*out = 0;
+	return libusb_control_transfer(h, RT_IN, REQ_I2C, slave, reg, out, 1, 500);
+}
+
+/* Walk even (write) addresses; odd ones are the read alias of the same chip.
+ *
+ * Careful with the result: a successful control transfer only means the bridge
+ * accepted the request, NOT that an I2C device acknowledged. If every address
+ * returns the same byte, nothing is really answering -- which is exactly what
+ * this device does before the peripherals are brought up. Report that rather
+ * than printing 128 false positives. */
+static void i2c_scan(libusb_device_handle *h)
+{
+	uint8_t seen[128];
+	int slave, ok = 0, i, uniform = 1;
+
+	printf("I2C scan via bRequest 0x%02x (reads only)\n", REQ_I2C);
+	memset(seen, 0, sizeof(seen));
+
+	for (slave = 0; slave <= 0xfe; slave += 2) {
+		uint8_t v;
+
+		if (i2c_read(h, (uint8_t)slave, 0x00, &v) != 1)
+			continue;
+		seen[slave / 2] = v;
+		if (ok && v != seen[0])
+			uniform = 0;
+		ok++;
+	}
+
+	if (ok && uniform) {
+		printf("  all %d address(es) returned the identical byte 0x%02x\n",
+		       ok, seen[0]);
+		printf("  -> the bridge accepts the transfer but no I2C device is\n");
+		printf("     answering. The peripherals are not reachable yet;\n");
+		printf("     see docs/PROTOCOL.md on the 0xC0 I2C bridge.\n");
+		return;
+	}
+	for (i = 0; i < 128; i++)
+		if (seen[i])
+			printf("  slave 0x%02x -> 0x%02x\n", i * 2, seen[i]);
+	printf("  %d address(es) accepted, values differ -- worth a closer look\n", ok);
+}
+
 int main(int argc, char **argv)
 {
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
-	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1;
+	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -103,12 +155,16 @@ int main(int argc, char **argv)
 			do_write = 1;
 		} else if (!strcmp(argv[i], "--len") && i + 1 < argc) {
 			rlen = atoi(argv[++i]);
+		} else if (!strcmp(argv[i], "--i2c-scan")) {
+			do_i2c = 1;
+			scan = 0;
 		} else if (!strcmp(argv[i], "--handshake")) {
 			do_hs = 1;
 		} else {
 			fprintf(stderr,
 				"usage: %s [--handshake] [--reg R [--write V]]\n"
 				"  --handshake: run the MCU-presence handshake first\n"
+				"  --i2c-scan : scan I2C slaves via bRequest 0xC0 (reads only)\n"
 				"  no args   : scan registers 0x00-0xff (reads only)\n"
 				"  --reg R   : read register R\n"
 				"  --write V : write V to register R (device state change)\n",
@@ -130,6 +186,13 @@ int main(int argc, char **argv)
 
 	if (do_hs)
 		handshake(h);
+
+	if (do_i2c) {
+		i2c_scan(h);
+		libusb_close(h);
+		libusb_exit(ctx);
+		return 0;
+	}
 
 	if (scan) {
 		int hits = 0;

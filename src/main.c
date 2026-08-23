@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <unistd.h>
 
 #include "device.h"
 #include "frame.h"
@@ -51,8 +52,72 @@ static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
 		g_written += (unsigned long long)len;
 }
 
+/* Signal presence, reported plainly.
+ *
+ * Every judgement in this project has to come through the receiver, so it is
+ * worth being explicit about what is actually observable. The test that matters
+ * is not any single register but whether anything TRACKS the source: static
+ * values prove nothing, because several timing registers hold plausible
+ * constants whether or not a clock is present (docs/PROTOCOL.md 5.20).
+ */
+static int diagnose(struct hd60s_dev *d)
+{
+	uint8_t hi0e = 0, hi0f = 0, lo0e = 0, lo0f = 0;
+	uint8_t v55 = 0, v14 = 0, vt_hi = 0, vt_lo = 0;
+	int vtotal;
+
+	log_info("--- signal diagnosis ---");
+
+	hd60s_set_hpd(d, 1);
+	sleep(2);
+	hd60s_mst_read(d, 0x02, 0x0e, &hi0e);
+	hd60s_mst_read(d, 0x02, 0x0f, &hi0f);
+	hd60s_mst_read(d, 0x00, 0x55, &v55);
+	hd60s_mst_read(d, 0x00, 0x14, &v14);
+	hd60s_mst_read(d, 0x00, 0x5b, &vt_hi);
+	hd60s_mst_read(d, 0x00, 0x5c, &vt_lo);
+	vtotal = ((vt_hi & 0x07) << 8) | vt_lo;
+
+	hd60s_set_hpd(d, 0);
+	sleep(2);
+	hd60s_mst_read(d, 0x02, 0x0e, &lo0e);
+	hd60s_mst_read(d, 0x02, 0x0f, &lo0f);
+	hd60s_set_hpd(d, 1);
+
+	printf("\n  HPD asserted   : p2 0x0e=%02x  p2 0x0f=%02x\n", hi0e, hi0f);
+	printf("  HPD de-asserted: p2 0x0e=%02x  p2 0x0f=%02x\n", lo0e, lo0f);
+	printf("  p0 0x55=%02x (gate wants & 0x3c == 0x3c)   p0 0x14=%02x\n",
+	       v55, v14);
+	printf("  V total        : %d\n\n", vtotal);
+
+	if (hi0e == lo0e && hi0f == lo0f) {
+		printf("  VERDICT: the receiver does not even see our HPD change.\n");
+		printf("           The control path is not reaching the front end.\n");
+		return 1;
+	}
+	if ((hi0e & 0x07) == 0 && vtotal == 0) {
+		printf("  VERDICT: NO SIGNAL.\n");
+		printf("           HPD reaches the hardware (p2 0x0e/0x0f track it),\n");
+		printf("           but no TMDS clock arrives and V total is 0.\n\n");
+		printf("           The overwhelmingly likely cause is that the source\n");
+		printf("           is not transmitting -- e.g. a console asleep. A\n");
+		printf("           sleeping console emits nothing and will NOT wake\n");
+		printf("           from an HDMI hot-plug event.\n\n");
+		printf("           Wake the source, then re-run. To confirm\n");
+		printf("           independently, put any display on this device's\n");
+		printf("           HDMI OUTPUT: if it stays dark, the source is the\n");
+		printf("           problem, not this driver.\n");
+		return 1;
+	}
+	printf("  VERDICT: a signal is present -- (p2 0x0e & 0x07)=%d, V total=%d.\n",
+	       hi0e & 0x07, vtotal);
+	printf("           Receiver bring-up can be validated against it.\n");
+	return 0;
+}
+
 static const char *g_script;
 static const char *g_post_script;
+static int g_diagnose;
 
 static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		      int seconds)
@@ -93,6 +158,12 @@ static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		} else {
 			log_warn("no valid EDID readable -- the source may refuse to output");
 		}
+	}
+
+	if (g_diagnose) {
+		diagnose(&dev);
+		hd60s_close(&dev);
+		return 0;
 	}
 
 	if (g_script && hd60s_run_script(&dev, g_script) < 0)
@@ -161,6 +232,7 @@ static void usage(const char *argv0)
 		"  --frames N             stop after N frames (0 = forever)\n"
 		"  --alt N                iso alt setting for --source device (1 or 2)\n"
 		"  --seconds N            stop after N seconds (device source)\n"
+		"  --diagnose             report whether a signal is actually present\n"
 		"  --script FILE          run a bring-up script before streaming\n"
 		"  --post-script FILE     run a script AFTER SET_INTERFACE\n"
 		"  -v                     verbose\n",
@@ -192,6 +264,8 @@ int main(int argc, char **argv)
 			fps = (uint32_t)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--frames") && i + 1 < argc)
 			want_frames = strtoull(argv[++i], NULL, 10);
+		else if (!strcmp(argv[i], "--diagnose"))
+			g_diagnose = 1;
 		else if (!strcmp(argv[i], "--script") && i + 1 < argc)
 			g_script = argv[++i];
 		else if (!strcmp(argv[i], "--post-script") && i + 1 < argc)

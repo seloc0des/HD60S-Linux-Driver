@@ -55,14 +55,14 @@ targets.
 
 ## The functions that mattered
 
-| Symbol | `.text` | What it gave us |
+| Symbol | VMA | What it gave us |
 |---|---|---|
 | `CUSBBaseDevice::SendVendorCommandRequest` | `0x13fd0` | URB layout, `URB_FUNCTION_VENDOR_DEVICE` (`0x17`) |
 | *(thunk)* | `0x62c00` | register **write**: `0xC1`, `wValue=(val<<8)\|reg`, no data |
 | *(thunk)* | `0x62c40` | register **read**: `0xC1`, `wValue=reg`, 1 byte IN |
 | `CheckIsMCUExist` | `0x19f80` | **the MCU-presence handshake** |
 | `CY3014_MCU_Exist` | `0x62e20` | MCU access via `0xC5` / `0xC6` |
-| `CY3014_HwInitialize` | `0x5f790` | full hardware init (not yet transcribed) |
+| `CY3014_HwInitialize` | `0x6fb10` | full hardware init (not yet transcribed) |
 
 ## Legal note
 

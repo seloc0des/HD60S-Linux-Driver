@@ -561,6 +561,41 @@ gate described in 5.7 — and it is now open.
 
 `./hd60s-reg --handshake` performs it and rescans.
 
+**Caveat, and it matters.** In `CY3014_HwInitialize` (VMA `0x6fb10`) the call to
+`CheckIsMCUExist` is guarded:
+
+```
+cmp WORD PTR [rax+0x8], 0xfd9     ; idVendor
+jne skip
+cmp WORD PTR [rax+0xa], 0x76      ; idProduct == 0x0076 (Rev. 4)
+jne skip
+call CheckIsMCUExist
+```
+
+So the vendor driver runs this handshake **only for PID `0x0076`**, not for our
+`0x005e`. We ran it anyway and it had a real effect — the writes were accepted,
+`0x39` began responding, and `0x34` changed `0x00` to `0x01`.
+
+Two readings are possible and we cannot yet distinguish them: the sequence is
+generic to the register block and Rev. 2 simply does not need it during the
+vendor's init, or Rev. 2 reaches the same state through a different path.
+[UNKNOWN] Do not assume we have replicated the vendor init for this device — we
+have only shown that this particular sequence works on it.
+
+#### Other init commands seen
+
+`CY3014_HwInitialize` dispatches heavily on VID/PID (`0fd9:004f`, `005e`,
+`0074`, `0076`, plus `04bb`, `1164`, `17ef` families). Two commands appear
+before the MCU check:
+
+| bRequest | Dir | Len | Notes |
+|---|---|---|---|
+| `0xC2` | IN | 1 | only when `(idProduct & 0xfff) == 0x531` — not this device |
+| `0xEC` | OUT | 10 | payload begins `b8 22 .. .. .. c0 .. 00 .. ca`; issued on the path our device takes |
+
+The `0xEC` payload is only partially recovered — several bytes of the 10-byte
+buffer are not written in the visible basic block. [UNKNOWN]
+
 #### Other request codes seen in the driver
 
 | bRequest | Role |

@@ -2,7 +2,7 @@
 # MST3367_TMDS_HOT_PLUG (VMA 0x18ab0) routes 0fd9:005e straight to a
 # read-modify-write of page 0x00 register 0xB7 bit 1 -- that bit is HPD.
 mst_read  0x00 0xb7
-mst_write 0x00 0xb7 0x02      # set bit 1
+mst_write 0x00 0xb7 0x00      # set bit 1
 delay 500
 mst_read  0x00 0xb7
 

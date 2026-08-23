@@ -95,7 +95,7 @@ static int diagnose(struct hd60s_dev *d)
 		printf("           The control path is not reaching the front end.\n");
 		return 1;
 	}
-	if ((hi0e & 0x07) == 0 && vtotal == 0) {
+	if ((hi0e & 0x07) == 0 && vtotal == 0 && (v55 & 0x3c) != 0x3c) {
 		printf("  VERDICT: NO SIGNAL.\n");
 		printf("           HPD reaches the hardware (p2 0x0e/0x0f track it),\n");
 		printf("           but no TMDS clock arrives and V total is 0.\n\n");
@@ -109,8 +109,8 @@ static int diagnose(struct hd60s_dev *d)
 		printf("           problem, not this driver.\n");
 		return 1;
 	}
-	printf("  VERDICT: a signal is present -- (p2 0x0e & 0x07)=%d, V total=%d.\n",
-	       hi0e & 0x07, vtotal);
+	printf("  VERDICT: SIGNAL PRESENT -- V total=%d, gate 0x55=%02x %s.\n",
+	       vtotal, v55, (v55 & 0x3c) == 0x3c ? "PASSES" : "fails");
 	printf("           Receiver bring-up can be validated against it.\n");
 	return 0;
 }

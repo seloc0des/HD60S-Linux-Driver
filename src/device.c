@@ -159,21 +159,32 @@ int hd60s_mst_raw_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out)
 }
 
 /* Hot-plug detect toward the source: page 0 register 0xB7 bit 1.
- * The DDC/EDID path is gated by this -- the EDID EEPROM at slave 0xa0 only
- * appears on the bus once HPD is asserted. */
+ *
+ * THE BIT IS ACTIVE LOW. Setting it de-asserts HPD; clearing it asserts.
+ * Measured directly: with 0xB7 = 0x00 the receiver reports V total 1125,
+ * H total 2200 and reg 0x55 = 0x7f, which satisfies the driver's validity gate
+ * ((v & 0x3c) == 0x3c) -- a fully locked 1080p60 signal. With 0xB7 = 0x02 all
+ * of that collapses.
+ *
+ * This also matches the vendor driver, which ends its bring-up with
+ * 0xB7 = 0x00 (VMA 0x43735) -- something the disassembly reported and this
+ * code previously overrode on a mistaken reading.
+ */
 int hd60s_set_hpd(struct hd60s_dev *d, int on)
 {
 	uint8_t v = 0;
 
 	if (hd60s_mst_read(d, 0x00, 0xb7, &v) < 0)
 		return -1;
-	v = on ? (uint8_t)(v | 0x02) : (uint8_t)(v & ~0x02);
+	/* on == assert == bit CLEAR */
+	v = on ? (uint8_t)(v & ~0x02) : (uint8_t)(v | 0x02);
 	if (hd60s_mst_write(d, 0x00, 0xb7, v) < 0)
 		return -1;
 	if (hd60s_mst_read(d, 0x00, 0xb7, &v) < 0)
 		return -1;
-	log_info("HPD %s (reg 0xb7 = 0x%02x)", (v & 0x02) ? "asserted" : "cleared", v);
-	return ((v & 0x02) != 0) == (on != 0) ? 0 : -1;
+	log_info("HPD %s (reg 0xb7 = 0x%02x, bit is active low)",
+		 (v & 0x02) ? "de-asserted" : "ASSERTED", v);
+	return ((v & 0x02) == 0) == (on != 0) ? 0 : -1;
 }
 
 /* Read the EDID the device presents to the source. Requires HPD asserted. */

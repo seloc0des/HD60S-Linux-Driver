@@ -1330,7 +1330,50 @@ passthrough output. If it shows the source, the source transmits and the fault
 is in our configuration. If it shows nothing, the source is not transmitting and
 no register sequence will change that.
 
-### 5.22 Still unknown
+### 5.22 HPD is ACTIVE LOW — receiver now locks [OBSERVED — CONFIRMED]
+
+**The single most consequential error in this project.** Page 0 register `0xB7`
+bit 1 is **active low**: clearing it *asserts* hot-plug detect, setting it
+*de-asserts*. This document and the driver code had it backwards throughout.
+
+Measured directly, sampling while toggling the bit:
+
+| `0xB7` bit 1 | V total | H total | `0x55` | gate `& 0x3c == 0x3c` |
+|---|---|---|---|---|
+| set (`0x02`) | 996 | 1483 | `0x02` | fails |
+| **clear (`0x00`)** | **1125** | **2200** | **`0x7f`** | **PASSES** |
+
+1125 x 2200 at 60 Hz is exactly 1080p60. With the bit clear the receiver
+achieves full lock and the vendor driver's own validity test succeeds.
+
+The disassembly said so all along: `MST3367_HwInitialize` ends with an
+unconditional `p0 0xB7 = 0x00` at VMA `0x43735`, and a trace explicitly flagged
+that "Windows leaves 0xB7 = 0x00 on this device". That was overridden here on a
+mistaken empirical reading — early in the session, setting the bit appeared to
+make the EDID EEPROM at slave `0xa0` become visible, and that coincidence was
+taken as proof of polarity. It was not.
+
+**Correction to 5.14 and 5.20.** 5.14 claimed asserting bit 1 gated the DDC path;
+5.20 concluded the receiver had never locked. Both were consequences of driving
+HPD backwards. With the polarity fixed the receiver locks reliably, and
+`hd60sd --diagnose` reports:
+
+```
+  p0 0x55=7f (gate wants & 0x3c == 0x3c)   V total = 1125
+  VERDICT: SIGNAL PRESENT -- V total=1125, gate 0x55=7f PASSES.
+```
+
+#### The two problems are now cleanly separated
+
+With a locked receiver reporting a valid 1080p60 signal, endpoint `0x83` still
+delivers **0 bytes in ~80000 serviced packets**. Receiver lock and the FX3
+datapath are therefore independent problems, and only the second remains.
+
+`p2 0x0E` still reads `0x00`, so the vendor driver's stream-open handshake
+(`0x6E452`-`0x6E474`, which waits for `(p2 0x0E & 0x07) != 0`) would still time
+out. That is now the sharpest remaining lead.
+
+### 5.23 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

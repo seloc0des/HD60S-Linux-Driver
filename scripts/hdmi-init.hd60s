@@ -32,7 +32,7 @@ mst_rmw 0x80 0xcf 0x7f 0x00      # stock: (old & 0x7F) | ((v&1)<<7), v=0x06 -> 0
 
 # --- re-assert HPD so the source re-probes ------------------------------
 delay 300
-mst_rmw 0x00 0xb7 0xff 0x02
+mst_rmw 0x00 0xb7 0xfd 0x00      # assert HPD (bit is ACTIVE LOW)
 delay 1500
 
 # --- did it lock? -------------------------------------------------------

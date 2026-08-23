@@ -1291,7 +1291,46 @@ an independent confirmation — no display was ever connected to the passthrough
 output, so every judgement about the source has come through the same
 uninitialised receiver we are trying to debug.
 
-### 5.21 Still unknown
+### 5.21 HPD reaches the hardware; TMDS never arrives [OBSERVED]
+
+A differential capture of all 768 MST3367 registers (pages 0, 1, 2) with HPD
+asserted for 3 s versus de-asserted for 3 s. Exactly three registers differ:
+
+| Register | HPD high | HPD low | Note |
+|---|---|---|---|
+| `p0 0xb7` | `0x02` | `0x00` | the bit we write — expected |
+| `p2 0x0e` | `0x10` | `0x00` | the stream-open handshake register |
+| `p2 0x0f` | `0x15` | `0x00` | |
+
+Two things follow.
+
+**Our HPD control genuinely reaches the hardware.** `p2 0x0e`/`0x0f` are not
+written by us and they track the HPD state, so the receiver observes the change.
+That validates the whole control chain end to end: USB -> MCU proxy -> I2C ->
+MST3367 -> a physical line the front end can see.
+
+**But no TMDS ever arrives.** `p2 0x0e` reads `0x10` — bit 4 set, bits 0-2
+clear, and the driver's stream-open handshake (`0x6E452`-`0x6E474`) waits for
+`(p2 0x0e & 0x07) != 0`. Not one timing, sync or status register outside those
+three moves. If a source were transmitting, HPD removal would collapse the clock
+and something would change; nothing does.
+
+Combined with 5.20 (the H values are static, not measurements), the conclusion is
+that **the front end never receives a signal**, and our HPD assertion — while
+electrically effective at the register level — does not result in the source
+transmitting.
+
+[UNKNOWN] Whether the cause is upstream (the source never starts) or at the
+physical layer (the sink presentation is incomplete in some way the registers do
+not show). This cannot be settled from the host: every observation we can make
+comes through the same receiver.
+
+**The decisive test is external**: connect a display to the HD60 S's HDMI
+passthrough output. If it shows the source, the source transmits and the fault
+is in our configuration. If it shows nothing, the source is not transmitting and
+no register sequence will change that.
+
+### 5.22 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

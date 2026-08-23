@@ -1,9 +1,11 @@
 /* hd60s-writetest -- determine whether bRequest 0xA0 accepts writes.
  *
- * Why this matters: if the device honours the OUT direction of the Cypress RAM
- * command, the FX3 download protocol may be usable, which opens the route to
- * loading a flash-reader into RAM and dumping the real firmware (the readable
- * window is only 252 bytes, see docs/PROTOCOL.md 5.1).
+ * Outcome (docs/PROTOCOL.md 5.1): writes ARE honoured, but only within the same
+ * 255-byte window as reads -- 0xfb and 0xfc are accepted, 0x100 stalls. So this
+ * is a bounded peek/poke window, not the Cypress FX3 boot loader, and there is
+ * no route to loading a flash-reader into RAM and dumping the firmware.
+ *
+ * Kept for regression checking and for re-testing other addresses.
  *
  * Design for safety:
  *   - By default the write is IDEMPOTENT: we read the byte first and write the
@@ -117,11 +119,13 @@ int main(int argc, char **argv)
 	rc = ram_write(h, addr, &wr, 1);
 	if (rc == 1) {
 		log_info("RESULT: write ACCEPTED (%d byte)", rc);
-		log_info("  the OUT direction of 0xA0 is live -- the FX3 download");
-		log_info("  protocol may be usable for loading a flash reader.");
+		log_info("  The OUT direction of 0xA0 is live, but only inside the");
+		log_info("  255-byte window: a write at 0x100 stalls, same bound as");
+		log_info("  reads. So this is a bounded peek/poke, NOT the FX3 boot");
+		log_info("  loader -- a flash reader cannot be loaded and run.");
 	} else if (rc == LIBUSB_ERROR_PIPE) {
-		log_info("RESULT: write STALLED -- writes are disabled in this firmware.");
-		log_info("  0xA0 is read-only here, so no RAM download path.");
+		log_info("RESULT: write STALLED -- outside the writable window.");
+		log_info("  Writes share the read bound (addr + len <= 0xFF).");
 	} else if (rc == LIBUSB_ERROR_TIMEOUT) {
 		log_err("RESULT: write TIMED OUT -- EP0 is probably wedged now.");
 		log_err("  unplug and replug before doing anything else.");

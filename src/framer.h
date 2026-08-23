@@ -19,6 +19,11 @@
 #define HD60S_MARK_ACTIVE 0x80
 #define HD60S_MARK_BLANK 0xAB
 
+/* Audio rides the same stream under a different marker: FF 00 FF LL, with
+ * LL*4 bytes of 16-bit stereo LE PCM following the marker. Our first parser
+ * only matched FF 00 00, so audio records were never in the search space. */
+#define HD60S_MARK_AUDIO 0xFF
+
 typedef void (*hd60s_frame_cb)(void *user, const uint8_t *frame, size_t len);
 
 struct hd60s_framer {
@@ -37,6 +42,9 @@ struct hd60s_framer {
 	unsigned long long badmark;      /* marker slot did not match at all */
 	uint8_t badsample[64];           /* 16 slots of 4 bytes */
 	int nbad;
+	unsigned long long audio_recs, audio_bytes;
+	uint8_t audio_len[8];
+	int naudio_len;
 	uint8_t oddval[8];
 	int noddval;
 	hd60s_frame_cb on_frame;

@@ -1923,3 +1923,104 @@ Twelve live registers, with the three interesting ones four apart.
 > flash on other products. A wrong write corrupts the boot image and bricks the
 > device permanently — not a replug. Establish what is on the bus for PID
 > `005e` before writing anything.
+
+### 10.3 The audio record format [OBSERVED — decoded, not yet seen on the wire]
+
+Audio shares the video stream as a second record type, distinguished by the
+**third** marker byte:
+
+```
+FF 00 00 KK  + <line> bytes YUY2    video   (KK = 0x80 active, 0xAB blanking)
+FF 00 FF NN  + NN*4   bytes PCM     audio
+```
+
+PCM is signed 16-bit little-endian, stereo, interleaved, 4 bytes per frame,
+nominally 48 kHz, `memcpy`'d verbatim. Records may appear between video lines
+and may straddle USB transfer boundaries. Audio records do not advance the video
+line pointer.
+
+Windows `CY3014_HwParseAnalogUSBPacketData` @ `0x671b0`:
+
+```
+671b0  cmp BYTE PTR [r13+0x0],0xff   ; jne resync
+671bb  cmp BYTE PTR [r13+0x1],0x0    ; jne resync
+671cd  mov al,BYTE PTR [r13+0x2]
+671d1  test al,al ; je  -> VIDEO
+671d9  cmp  al,0xff ; jne resync -> AUDIO
+67248  movzx eax,BYTE PTR [r13+0x3]
+6724d  lea edi,[rax*4+0x4]           ; total = NN*4 + 4
+6729c  lea rcx,[rcx+rbx*1+0x1848]    ; ring at hw+0x1848
+```
+
+The ring caps at `0x2EE00` = 192,000 bytes = exactly 1 s of 48 kHz/16-bit/stereo,
+which corroborates the format. `libUB530.dylib` fn `0xd476` (marker test at
+`0xd5bd`, audio branch `0xd702`) reaches the identical conclusion in unrelated
+code, and its context init writes `0xbb80` = 48000.
+
+**Our earlier instrumentation matched only the 3-byte prefix `FF 00 00`, so audio
+records were never in the search space.** That has been corrected; the framer now
+counts `FF 00 FF` records explicitly. It still reads zero.
+
+### 10.4 The vendor's real scan list is 14 records, not 10
+
+Recovered verbatim from `CY3014_FillScanRegisters` @ `0x63070`, which builds it
+byte by byte on the stack as `{reg, tag|page, mask, aux}`:
+
+```
+55 80 3c 00   6a 80 0f 00   6b 80 fe 00   01 81 07 00
+0b 82 df 00   0c 82 3f 00   0e 82 08 00   48 82 60 00
+9b 82 f0 00   11 82 ff 00   12 82 ff 00   11 82 ff 00
+12 82 ff 00   0e 40 d0 9a
+```
+
+Ours had 10 records and used mask `0x80` on the IT6612 entry where the vendor
+uses `0xd0`. The full 56-byte list is accepted (`len=56 -> ok`) and changes
+nothing — audio still does not appear. `scripts/arm14.hd60s`.
+
+The same function builds a second variant beginning `28 82 ff 00`, and a
+separate record `00 40 ff 32` targeting **I2C slave 0x32** — the MCU's
+flash/firmware path.
+
+### 10.5 A wedged datapath needs a power cycle, not a USB reset
+
+The receiver can be perfectly locked and configured while the FX3 still receives
+nothing:
+
+```
+0x55 = 0x7f   locked, 2200 x 1125      0xB0 = 0x25   output enable set
+0xAB = 0x15   CSC gate clear           0xAE = 0x37   bit 2 set
+0xB1..0xB5 = c0 00 00 54 0c            p2 0x12 = 0x11  signal present
+p1 0x24 = 0x40                         p2 0x9B = 0x40  48 kHz audio present
+```
+
+and still deliver 0 bytes. `libusb_reset_device` does **not** fix this — it
+re-enumerates but does not cut power to the CPLD or the FX3's GPIF. Unplugging
+the USB cable for a few seconds does. Confirmed by bisection: the last committed
+build, which had streamed 4168 frames earlier, also returned 0 bytes in that
+state, so it is device state and not a software regression.
+
+`scripts/tmds-recover.hd60s` implements the MCU's own TMDS hot-plug order
+(`p2 0x1B=0xFF` -> HPD de-assert -> `p0 0xB8` `0x10`/`0x00` reset pulse ->
+`p0 0x51=0x89` -> HPD assert -> `p2 0x07` `0xF4`/`0x04`) and recovers lock from
+states the normal bring-up cannot.
+
+### 10.6 Ruled out for audio, with video live
+
+- the audio codec at slave `0x94` is a CS42L51 (`reg 0x01 = 0xd9`). It is
+  reachable and writable: `reg 0x03` takes `0xa0` -> `0xa1` and the value is
+  sticky across USB resets. `reg 0x09` will not take `0x46` (reads `0x42`
+  before and after), so those bits are read-only or masked. Writing it does not
+  disturb video (900 frames through the sequence) and does not produce audio.
+- the full 14-record scan list: accepted, no change
+- servicing the interrupt-pipe doorbell throughout a 40 s capture (2353 frames,
+  10 GB, 3 doorbell packets): no change
+- an exhaustive sweep of the Windows driver's vendor-command emitter
+  (`SendVendorCommandRequest` @ `0x13fd0`, 273 call sites) yields only
+  `{A0, C0, C1, C2, C3, C5, C6, C7, EC}` and none is an audio gate
+
+> **`bRequest 0xC3` — CORRECTION.** An earlier note here said `0xC3` carries no
+> brick risk. That was wrong and is withdrawn. All 14 GSPI sites are gated on
+> `idProduct & 0xFFF == 0x530` (a YUAN board), so the vendor driver has never
+> sent this device a `0xC3` — meaning the binaries contain **no evidence at all**
+> about what is on that bus for PID `005e`. The GV7601 identification belongs to
+> a sibling SKU. Do not write there.

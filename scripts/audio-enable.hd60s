@@ -1,0 +1,21 @@
+# Audio front end. The receiver has 48 kHz locked (p2 0x9B = 0x40) but nothing
+# clocks the codec, so the FX3 has no PCM to packetise into FF 00 FF records.
+#
+# Slave 0x94 is the audio codec, reached through the MCU proxy
+# (bRequest 0xC0, wValue 0x5066, payload [slave, reg, val]).
+i2c_read  0x94 0x01
+i2c_read  0x94 0x03
+i2c_read  0x94 0x09
+# the sequence the MCU firmware itself performs
+i2c_write 0x94 0x09 0x46
+delay 20
+i2c_write 0x94 0x03 0xa0
+delay 20
+i2c_write 0x94 0x03 0xa1
+delay 50
+i2c_read  0x94 0x03
+i2c_read  0x94 0x09
+# receiver audio output: unmute and enable
+mst_write 0x02 0x1b 0xfc
+mst_write 0x02 0x27 0x00
+mst_read  0x02 0x9b

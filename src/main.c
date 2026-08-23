@@ -360,6 +360,8 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 				 g_framer.oddmark, odd);
 			log_info("blanking lines %llu, non-flat %llu",
 				 g_framer.blank_lines, g_framer.blank_dirty);
+			log_info("AUDIO records %llu, %llu bytes",
+				 g_framer.audio_recs, g_framer.audio_bytes);
 			if (g_framer.nbad) {
 				char b[16 * 12 + 1] = "";
 

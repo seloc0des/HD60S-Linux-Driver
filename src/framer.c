@@ -116,8 +116,35 @@ static void take_line(struct hd60s_framer *f)
 	}
 }
 
+/* Independent of the line parser: just count FF 00 FF records so we can tell
+ * whether the device is emitting audio at all, without restructuring anything. */
+static void sniff_audio(struct hd60s_framer *f, const uint8_t *d, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i + 4 <= n; i++) {
+		const uint8_t *p = memchr(d + i, 0xFF, n - i - 3);
+
+		if (!p)
+			return;
+		i = (size_t)(p - d);
+		if (p[1] == 0x00 && p[2] == HD60S_MARK_AUDIO) {
+			int k, known = 0;
+
+			f->audio_recs++;
+			f->audio_bytes += (unsigned long long)p[3] * 4;
+			for (k = 0; k < f->naudio_len; k++)
+				if (f->audio_len[k] == p[3])
+					known = 1;
+			if (!known && f->naudio_len < (int)sizeof(f->audio_len))
+				f->audio_len[f->naudio_len++] = p[3];
+		}
+	}
+}
+
 void hd60s_framer_push(struct hd60s_framer *f, const uint8_t *data, size_t len)
 {
+	sniff_audio(f, data, len);
 	while (len) {
 		size_t want = HD60S_LINE_LEN - f->lpos;
 		size_t take = len < want ? len : want;

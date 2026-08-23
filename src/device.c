@@ -72,7 +72,11 @@ int hd60s_i2c_read(struct hd60s_dev *d, uint8_t slave, uint8_t reg, uint8_t *out
 
 int hd60s_i2c_write(struct hd60s_dev *d, uint8_t slave, uint8_t reg, uint8_t val)
 {
-	uint8_t pkt[4] = { (uint8_t)(slave & 0xfe), 0x02, reg, val };
+	/* The MCU proxy write form is [slave, reg, data...] with no length
+	 * byte -- it forwards n-1 bytes starting at payload[1]. We used to
+	 * insert a count here, which made every generic write land on the
+	 * wrong register. Reads DO carry a length: [slave|1, N, reg]. */
+	uint8_t pkt[3] = { (uint8_t)(slave & 0xfe), reg, val };
 	int rc = hd60s_mcu_write(d, 0x66, pkt, sizeof(pkt));
 
 	usleep(8000);

@@ -1,0 +1,26 @@
+# The MCU's own TMDS hot-plug order (firmware 0x4c2c), which our bring-up only
+# partly performs. Use this when the receiver reports no signal but the source
+# is definitely on.
+mst_write 0x02 0x1b 0xff
+# HPD de-assert (bit 1 SET = de-asserted; the bit is active low)
+mst_rmw   0x00 0xb7 0xff 0x02
+delay 300
+# TMDS reset pulse
+mst_write 0x00 0xb8 0x10
+delay 100
+mst_write 0x00 0xb8 0x00
+delay 100
+# input mux: digital/HDMI front end
+mst_write 0x00 0x51 0x89
+delay 100
+# HPD assert
+mst_rmw   0x00 0xb7 0xfd 0x00
+delay 2000
+# front-end reset pulse the vendor always issues after HDMI init
+mst_write 0x02 0x07 0xf4
+mst_write 0x02 0x07 0x04
+delay 1500
+mst_read  0x00 0x55
+mst_read  0x00 0x6a
+mst_read  0x00 0x6b
+mst_read  0x00 0x51

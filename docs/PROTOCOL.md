@@ -809,7 +809,62 @@ published teardown.
 > every address. That form is not real I2C on this device — the working path is
 > the MCU proxy above. The earlier scan was probing the wrong half of `0xC0`.
 
-### 5.12 Still unknown
+### 5.12 The peripheral chips [OBSERVED]
+
+Every `i2c_access` call site in the driver, with the slave constant recovered:
+
+| Slave | Chip | Driver code |
+|---|---|---|
+| `0x64` | analog components | `CY3014_HwAnalogComponents*` |
+| `0x88` | firmware register scanner | `CY3014_CtrlFirmwareRegisterScanner` |
+| `0x94` | CS53L21 audio codec | `CY3014_CS53L21_*` |
+| `0x98` | **CPLD** | `CY3014_CPLD_LoadGPIO / SaveGPIO / SetGPIO` |
+| `0x9a` | **IT6612 HDMI transmitter** (passthrough) | `CY3014_ITE6612_*` — ID verified `54 49 12 16` |
+| `0x9c` | **MST3367 HDMI receiver** | `CY3014_MST3367_*` |
+| `0xaa` | firmware register poll | `CY3014_PollFirmwareRegisterScanner` |
+
+`0x98` being the CPLD matches the Altera MAX II in the teardown, which formats
+video into the FX3's GPIF-II bus.
+
+#### MST3367 register pages
+
+The receiver banks its register file. From the writer at VMA `0x65080`:
+
+```
+i2c_write(0x9c, 0x00, page)     ; register 0x00 selects the page
+i2c_write(0x9c, reg,  value)    ; then the target register
+```
+
+That helper branches on the MCU-present flag (`[dev+0x63f0]`, set by
+`CheckIsMCUExist`). With the MCU up — our case — it goes through `i2c_access`;
+without it, it falls back to the direct `wValue = 0x9c` form. So the handshake
+is a prerequisite for touching the receiver at all.
+
+`./hd60s-reg --mst-dump PAGE` reads a page. Page `0x01` with no HDMI input:
+
+```
+00: 02 61 00 01 01 00 08 04 03 28 00 00 00 00 90 15
+10: 06 93 5d 00 00 00 05 c0 c0 ff ff fc 1a 00 00 00
+20: 00 00 26 00 00 a2 00 00 06 00 00 00 00 00 a1 00
+30: 10 00 00 00 05 00 01 00 00 00 00 00 00 00 00 00
+```
+
+#### Receiver init is a flat register list
+
+`MST3367_HwInitialize` (VMA `0x427b0`) is a run of `(page, reg, value)` writes
+through `0x65080` — no table, just straight-line code with branches on device
+variant. `tools/mst3367-init.py` extracts it: **73 writes, 56 fully literal**,
+the rest computed at runtime and reported as `??` rather than guessed.
+
+```bash
+./tools/mst3367-init.py            # listing
+./tools/mst3367-init.py --emit-c   # as a C table
+```
+
+Because the function branches, a flat extraction is not the exact runtime order.
+It is a starting point for replay, not a transcript.
+
+### 5.13 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

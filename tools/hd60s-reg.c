@@ -117,6 +117,52 @@ static int i2c_read(libusb_device_handle *h, uint8_t slave, uint8_t reg,
 	return rc == 1 ? 0 : -1;
 }
 
+/* I2C write: [slave] [count] [reg] [value...]. The write address is the slave
+ * with bit 0 clear, which is how i2c_access builds it. */
+static int i2c_write(libusb_device_handle *h, uint8_t slave, uint8_t reg,
+		     uint8_t val)
+{
+	uint8_t pkt[4] = { (uint8_t)(slave & 0xfe), 0x02, reg, val };
+	int rc;
+
+	rc = libusb_control_transfer(h, RT_OUT, REQ_I2C, 0x5066, 0, pkt,
+				     sizeof(pkt), 1000);
+	usleep(8000);
+	return rc == (int)sizeof(pkt) ? 0 : -1;
+}
+
+/* The MST3367 HDMI receiver banks its register file: slave 0x9c register 0x00
+ * selects the page. From the writer at VMA 0x65080, which sends {0x00, page}
+ * through i2c_access before touching the target register. */
+#define MST3367_SLAVE 0x9c
+
+static int mst_read(libusb_device_handle *h, uint8_t page, uint8_t reg,
+		    uint8_t *out)
+{
+	if (i2c_write(h, MST3367_SLAVE, 0x00, page) != 0)
+		return -1;
+	return i2c_read(h, MST3367_SLAVE, reg, out);
+}
+
+static void mst_dump(libusb_device_handle *h, uint8_t page)
+{
+	int r;
+
+	printf("MST3367 page 0x%02x, registers 0x00-0x3f:\n", page);
+	for (r = 0; r < 0x40; r++) {
+		uint8_t v;
+
+		if ((r % 16) == 0)
+			printf("  %02x:", r);
+		if (mst_read(h, page, (uint8_t)r, &v) == 0)
+			printf(" %02x", v);
+		else
+			printf(" --");
+		if ((r % 16) == 15)
+			printf("\n");
+	}
+}
+
 /* Dump a slave's low register space -- how you identify a chip. */
 static void i2c_dump(libusb_device_handle *h, uint8_t slave, int n)
 {
@@ -247,7 +293,7 @@ int main(int argc, char **argv)
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
 	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0, do_en = 0, do_mcuver = 0;
-	long dump_slave = -1;
+	long dump_slave = -1, mst_page = -1;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -267,6 +313,9 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--i2c-dump") && i + 1 < argc) {
 			dump_slave = strtol(argv[++i], NULL, 0);
 			scan = 0;
+		} else if (!strcmp(argv[i], "--mst-dump") && i + 1 < argc) {
+			mst_page = strtol(argv[++i], NULL, 0);
+			scan = 0;
 		} else if (!strcmp(argv[i], "--i2c-scan")) {
 			do_i2c = 1;
 			scan = 0;
@@ -280,6 +329,7 @@ int main(int argc, char **argv)
 				"  --mcu-version: read the MCU ROM version via the MCU proxy\n"
 				"  --i2c-scan : scan I2C slaves via the MCU proxy (reads only)\n"
 				"  --i2c-dump S: dump registers 0x00-0x1f of slave S\n"
+				"  --mst-dump P: dump MST3367 HDMI receiver page P\n"
 				"  no args   : scan registers 0x00-0xff (reads only)\n"
 				"  --reg R   : read register R\n"
 				"  --write V : write V to register R (device state change)\n",
@@ -306,6 +356,13 @@ int main(int argc, char **argv)
 
 	if (do_mcuver) {
 		mcu_version(h);
+		libusb_close(h);
+		libusb_exit(ctx);
+		return 0;
+	}
+
+	if (mst_page >= 0) {
+		mst_dump(h, (uint8_t)mst_page);
 		libusb_close(h);
 		libusb_exit(ctx);
 		return 0;

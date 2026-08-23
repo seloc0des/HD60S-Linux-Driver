@@ -129,10 +129,14 @@ int main(int argc, char **argv)
 		log_warn("RESULT: unexpected: %s", libusb_error_name(rc));
 	}
 
-	/* verify nothing moved under us */
+	/* verify nothing moved under us -- only meaningful if it was readable */
 	if (ram_read(h, addr, &after, 1) == 1) {
 		log_info("0x%08x now reads 0x%02x (%s)", addr, after,
 			 after == before ? "unchanged" : "CHANGED");
+	} else if (force) {
+		/* it was never readable; a failed read-back here means nothing */
+		log_info("0x%08x is outside the readable window, so there is no"
+			 " read-back to check", addr);
 	} else {
 		log_warn("read-back failed; device may need a replug");
 	}

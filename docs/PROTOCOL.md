@@ -500,7 +500,76 @@ their work.
 `0xc0` is the register accessor does not help while the device refuses register
 access until it has been unlocked in a way nobody has published.
 
-### 5.8 Still unknown
+### 5.8 Register protocol and the MCU handshake [OBSERVED — CONFIRMED ON HARDWARE]
+
+Recovered by disassembling the vendor Windows driver, then **verified on the
+real device**. See `docs/VENDOR-DRIVER.md` for how the driver was obtained and
+analysed.
+
+#### Transport
+
+`CUSBBaseDevice::SendVendorCommandRequest(UCHAR bRequest, USHORT wValue,
+USHORT wIndex, PVOID buf, ULONG len, UCHAR dir)` builds a `0x88`-byte URB with
+function `0x17` = **`URB_FUNCTION_VENDOR_DEVICE`**, placing `bRequest` at URB
+offset `0x81`, `wValue` at `0x82`, `wIndex` at `0x84`.
+
+So these are **vendor / device-recipient** transfers — `bmRequestType 0xC0`
+(IN) and `0x40` (OUT). Earlier notes in this file, following third-party
+analysis, called them class-interface; that was wrong.
+
+#### Register access — `bRequest 0xC1`
+
+From the two thunks at `.text 0x62c00` (write) and `0x62c40` (read):
+
+| Operation | bmRequestType | bRequest | wValue | wIndex | Data |
+|---|---|---|---|---|---|
+| read | `0xC0` | `0xC1` | `reg` | 0 | 1 byte IN |
+| write | `0x40` | `0xC1` | `(value << 8) \| reg` | 0 | **none** |
+
+The write carries its value in the **high byte of `wValue`** and has no data
+stage at all. That is why every blind sweep with `wValue = 0` missed it, and
+why the device looked completely inert for so long.
+
+#### The MCU-presence handshake
+
+Transcribed from `CheckIsMCUExist()` at `.text 0x19f80`:
+
+```
+if (idVendor == 0x04bb && (idProduct & 0xfff) == 0x543)
+        probe = 0x33          # a different product
+else
+        probe = 0x39          # 0fd9:005e takes this branch
+
+reg_write(probe, 0xC0)        # wValue 0xc039
+reg_write(0x34,  0x41)        # wValue 0x4134
+for i in 0..99:
+        delay(10)
+        if reg_read(probe) == 1:
+                break         # MCU is up
+```
+
+**Verified on hardware.** Both writes are accepted and `reg 0x39` reads `1` on
+the first poll. The register map changes as a result:
+
+| Register | Before handshake | After |
+|---|---|---|
+| `0x34` | `0x00` | `0x01` |
+| `0x39` | *stalls* | `0x01` |
+
+Before the handshake only register `0x34` answers a read at all. This is the
+gate described in 5.7 — and it is now open.
+
+`./hd60s-reg --handshake` performs it and rescans.
+
+#### Other request codes seen in the driver
+
+| bRequest | Role |
+|---|---|
+| `0xC1` | register read/write (above) |
+| `0xC5`, `0xC6` | MCU access, used by `CY3014_MCU_Exist` |
+| `0xA0` | EZ-USB data (`CY3014_Get/SetEzusbData`) — the 255-byte window in 5.1 |
+
+### 5.9 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

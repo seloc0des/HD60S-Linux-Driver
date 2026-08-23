@@ -3,6 +3,7 @@ hd60s-dumpram
 hd60s-writetest
 hd60s-isotest
 hd60s-osdesc
+hd60s-regprobe
 hd60sd
 *.o
 docs/enumerations/

@@ -98,6 +98,20 @@ it. Same bound as reads. `0xA0` is a bounded peek/poke window, not the FX3 boot
 loader, so a flash reader cannot be loaded and run. **This closes the on-device
 firmware dump route.**
 
+## E8 — Class-interface request space (DONE)
+
+```bash
+./hd60s-regprobe --sweep
+./hd60s-regprobe --scan-bank 0x98 --req 0xc0
+```
+
+Result: nothing responds. All 256 codes at `bmRequestType` `0xA1`/`0xA0`/`0xC2`
+stall, and bank `0x98` registers `0x00`-`0xff` stall under every request code
+the Windows-driver analysis names.
+
+This corroborates the third-party finding that register access is gated behind
+an MCU-presence handshake. Read-only and safe.
+
 ## E5 — Full command set (blocked)
 
 The vendor command set cannot be derived by probing alone -- E4b established

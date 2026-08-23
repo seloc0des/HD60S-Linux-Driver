@@ -448,7 +448,59 @@ Sweeps taken with no HDMI input and with a Switch connected at 1080p are
 only responding request is a RAM read of a fixed code region, which of course
 does not change with input state. No status register has been located yet.
 
-### 5.7 Still unknown
+### 5.7 The real command set is class-interface, and it is gated [OBSERVED]
+
+Static analysis of the official **Windows** driver, published by the
+[hd60s-linux](https://github.com/Hydrogen2K/hd60s-linux) project in
+`docs/vendor-driver-analysis.md`, reports that the device is driven with
+`URB_FUNCTION_CLASS_INTERFACE` requests — `bmRequestType` `0xA1` (IN) / `0x21`
+(OUT) — **not** the vendor requests swept in 5.1. Their reported codes:
+
+| bRequest | Purpose (per third-party analysis) |
+|---|---|
+| `0xc0` | direct register read/write, `wValue` = bank, `wIndex` = register, 1-byte payload |
+| `0xc1` | internal register transaction (bit-banged) |
+| `0xa0` | EEPROM reads |
+| `0xa6` | debug / board-memory reads |
+| `0xaa` | MCU proxy traffic |
+| `0xc2`, `0xc6`, `0xc7`, `0xec` | seen in the PnP initialisation path |
+
+This is **third-party analysis we have not confirmed**, and it corrects an
+assumption in this document: our own sweep only covered vendor requests
+(`0xC0`/`0xC1` request *types*), so it could never have found a class-interface
+command. That is very likely why only `0xA0` ever answered.
+
+#### What our hardware says [OBSERVED]
+
+Sweeping the class space, reads only:
+
+| bmRequestType | Codes tried | Responses |
+|---|---|---|
+| `0xA1` class, IN, interface | 0x00–0xff | **0** |
+| `0xA0` class, IN, device | 0x00–0xff | **0** |
+| `0xC2` vendor, IN, endpoint | 0x00–0xff | **0** |
+
+And the documented direct register form against bank `0x98` (the bank their
+confirmed sequence starts with), registers `0x00`–`0xff`:
+
+| Request code | Registers responding |
+|---|---|
+| `0xc0`, `0xc1`, `0xa6`, `0xaa`, `0xc2`, `0xc6`, `0xc7`, `0xec` | **0** each |
+
+Nothing responds. This **independently corroborates** their finding that direct
+register access fails on a power-on device, and that the official driver first
+performs a *sensitive MCU-presence handshake* before register access becomes
+functional — after which a "tunneled register form" is used instead.
+
+That handshake is deliberately not published (`the handshake and proxy sequence
+are intentionally not implemented without a trace`), so it cannot be lifted from
+their work.
+
+**Consequence:** the gate is the handshake, not the command codes. Knowing
+`0xc0` is the register accessor does not help while the device refuses register
+access until it has been unlocked in a way nobody has published.
+
+### 5.8 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

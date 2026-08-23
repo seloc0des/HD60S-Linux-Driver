@@ -259,10 +259,121 @@ static void LIBUSB_CALL iso_cb(struct libusb_transfer *x)
 	d->live--;
 }
 
+/* Is this alt setting's streaming endpoint bulk rather than isochronous?
+ *
+ * On a SuperSpeed link the device exposes extra alternate settings, and the
+ * top one (alt 4 on this unit) carries a BULK endpoint with bMaxBurst 15 --
+ * that is the real capture path. The USB 2.0 personality has only the
+ * isochronous alts. Rather than hard-code either, ask the descriptor.
+ */
+static int alt_is_bulk(struct hd60s_dev *d, int alt, int *mps, int *burst)
+{
+	struct libusb_config_descriptor *cfg;
+	int i, a, e, found = 0;
+
+	*mps = 1024;
+	*burst = 0;
+	if (libusb_get_active_config_descriptor(libusb_get_device(d->h), &cfg) != 0)
+		return 0;
+
+	for (i = 0; i < cfg->bNumInterfaces && !found; i++) {
+		const struct libusb_interface *itf = &cfg->interface[i];
+
+		for (a = 0; a < itf->num_altsetting && !found; a++) {
+			const struct libusb_interface_descriptor *id =
+				&itf->altsetting[a];
+
+			if (id->bInterfaceNumber != HD60S_IF_STREAM ||
+			    id->bAlternateSetting != alt)
+				continue;
+			for (e = 0; e < id->bNumEndpoints; e++) {
+				const struct libusb_endpoint_descriptor *ep =
+					&id->endpoint[e];
+
+				if (ep->bEndpointAddress != HD60S_EP_STREAM_ISO)
+					continue;
+				*mps = ep->wMaxPacketSize & 0x7ff;
+				if ((ep->bmAttributes & 3) == LIBUSB_TRANSFER_TYPE_BULK) {
+					struct libusb_ss_endpoint_companion_descriptor *ss;
+
+					found = 1;
+					if (ep->extra_length > 0 &&
+					    libusb_get_ss_endpoint_companion_descriptor(
+						    NULL, ep, &ss) == 0) {
+						*burst = ss->bMaxBurst;
+						libusb_free_ss_endpoint_companion_descriptor(ss);
+					}
+				}
+			}
+		}
+	}
+	libusb_free_config_descriptor(cfg);
+	return found;
+}
+
+static void LIBUSB_CALL bulk_cb(struct libusb_transfer *x)
+{
+	struct hd60s_dev *d = x->user_data;
+
+	if (x->status == LIBUSB_TRANSFER_CANCELLED ||
+	    x->status == LIBUSB_TRANSFER_NO_DEVICE) {
+		free(x->buffer);
+		libusb_free_transfer(x);
+		d->live--;
+		return;
+	}
+	d->pkts++;
+	if (x->actual_length > 0) {
+		d->nonempty++;
+		d->bytes += (unsigned long long)x->actual_length;
+		if (d->on_data)
+			d->on_data(d, x->buffer, x->actual_length);
+	}
+	if (!d->stop && libusb_submit_transfer(x) == 0)
+		return;
+	free(x->buffer);
+	libusb_free_transfer(x);
+	d->live--;
+}
+
+static int stream_start_bulk(struct hd60s_dev *d, int alt, int mps, int burst)
+{
+	/* one URB = burst-sized chunks; big enough to keep the pipe full */
+	size_t len = (size_t)mps * (burst + 1) * 8;
+	int i;
+
+	for (i = 0; i < NUM_XFERS; i++) {
+		uint8_t *buf = malloc(len);
+		struct libusb_transfer *x = libusb_alloc_transfer(0);
+
+		if (!buf || !x) {
+			free(buf);
+			if (x)
+				libusb_free_transfer(x);
+			break;
+		}
+		libusb_fill_bulk_transfer(x, d->h, HD60S_EP_STREAM_ISO, buf,
+					  (int)len, bulk_cb, d, 2000);
+		if (libusb_submit_transfer(x) != 0) {
+			free(buf);
+			libusb_free_transfer(x);
+			continue;
+		}
+		d->live++;
+	}
+	if (!d->live) {
+		log_err("no bulk transfers could be submitted");
+		return -1;
+	}
+	log_info("streaming: alt %d BULK, mps %d burst %d, %zu B/urb, %d urbs",
+		 alt, mps, burst + 1, len, d->live);
+	return 0;
+}
+
 int hd60s_stream_start(struct hd60s_dev *d, int alt)
 {
 	int pkt = (alt == 1) ? 1024 : 3072;
-	int i, rc;
+	int i, rc, mps = 0, burst = 0;
 
 	rc = libusb_claim_interface(d->h, HD60S_IF_STREAM);
 	if (rc != 0) {
@@ -275,6 +386,9 @@ int hd60s_stream_start(struct hd60s_dev *d, int alt)
 		log_err("set alt %d: %s", alt, libusb_error_name(rc));
 		return -1;
 	}
+
+	if (alt_is_bulk(d, alt, &mps, &burst))
+		return stream_start_bulk(d, alt, mps, burst);
 
 	for (i = 0; i < NUM_XFERS; i++) {
 		size_t len = (size_t)pkt * PKTS_PER_XFER;

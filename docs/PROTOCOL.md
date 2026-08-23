@@ -89,7 +89,7 @@ resolution/framerate, or refusing to stream video at all. [UNKNOWN] which.
 
 ---
 
-## 4. SuperSpeed personality [UNKNOWN]
+## 4. SuperSpeed personality [OBSERVED]
 
 Not yet captured. The device has so far only linked at 480M on this host,
 across several cables and four receptacles on two different xHCI controllers
@@ -108,6 +108,30 @@ to with the HD60 S. Host controller and ports are therefore cleared, leaving
 the cable or the device's own SuperSpeed pairs. Given several cables were tried
 with an identical signature — USB 2 half `configured`, SS half `not attached` —
 the device's USB-C receptacle is the leading suspect.
+
+### Captured at last: the SuperSpeed descriptor set [OBSERVED]
+
+The link finally trained at **5000 Mbit/s** (bus 4). The personality is
+materially different from the USB 2.0 one:
+
+| Interface | Alt | Endpoint | Type | Notes |
+|---|---|---|---|---|
+| 0 | 0 | `0x83` | iso | 0 bytes — idle |
+| 0 | 1 | `0x83` | iso | 1x1024 |
+| 0 | 2 | `0x83` | iso | 1x1024 + SS companion |
+| 0 | 3 | `0x83` | iso | 1x1024 + SS companion, `wBytesPerInterval` 39936 |
+| **0** | **4** | **`0x83`** | **BULK** | **`bMaxBurst` 15 = 16 packets/burst** |
+| 1 | 0 | `0x81` | interrupt | 64 B, `bInterval` 7 |
+
+**Alt 4 is the real capture path.** The USB 2.0 personality has only alts 0-2,
+all isochronous — there is no bulk endpoint on High Speed at all. That is what
+`bFunctionalitySupport = SuperSpeed` in the BOS descriptor means in practice.
+
+`hd60s_stream_start` now reads the descriptor to decide: if the selected alt's
+endpoint `0x83` is bulk it submits bulk URBs (burst-sized, 128 KB each), else
+isochronous. Nothing is hard-coded to either personality.
+
+Full dump in `docs/descriptors-superspeed.json`.
 
 ### The device does advertise SuperSpeed [OBSERVED]
 

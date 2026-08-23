@@ -1,0 +1,6 @@
+# bring-up ends by clearing bit 4 of CPLD 0x20 (line 103-104). Set it back
+# now that the alt is selected and the FX3 sockets are armed.
+cpld_read 0x20
+cpld_rmw  0x20 0xff 0x10
+delay 200
+cpld_read 0x20

@@ -1487,3 +1487,98 @@ it does not go in the code.
 HDMI sources that assert HDCP will not be capturable, and nothing in this
 driver attempts to defeat that. Consoles generally allow disabling HDCP for
 game output; that is the supported path.
+
+## 7. Where the data stops [OBSERVED]
+
+Established 2026-08-23, with the receiver locked to a 1080p60 Switch over a
+SuperSpeed link. This section supersedes any earlier speculation about the
+endpoint being misconfigured.
+
+### 7.1 The USB side is healthy; the FX3 is starved
+
+Logging `libusb`'s transfer status (rather than only the byte count) separates
+three cases that all previously looked like "0 bytes":
+
+| alt | endpoint | status | meaning |
+|---|---|---|---|
+| 4 | bulk | `TIMED_OUT`, actual 0 of 131072 | device NAKs forever -- nothing queued |
+| 1 | iso | `COMPLETED`, every packet len 0 | device sends empty packets every interval |
+
+Neither is an error, a STALL, or a babble. The endpoint is armed and the host
+controller is happy. The FX3 simply has no data to hand over.
+
+### 7.2 The FX3's DMA channel *is* being built [OBSERVED]
+
+`bRequest 0xA0` reaches the FX3's peripheral space, not just its RAM. Reads are
+byte-wide, and FX3 peripheral registers only answer 32-bit accesses, so **only
+the low byte of each 32-bit register is recoverable** -- every word reads back as
+`0x000000xx`. That is still enough to diff.
+
+Dumping 4 KB of each block while idle and again while streaming on alt 4:
+
+| block | base | idle -> streaming |
+|---|---|---|
+| PIB (GPIF) | `0xE0014000` | 14 bytes change; `+0x00` `0x20`->`0x00`, `+0x04` ->`0x6c`, `+0x2c` ->`0x30`, `+0x12c` `0x01`->`0xf1` |
+| PIB sockets | `0xE0018000` | socket 0 `+0x00` `0xff`->`0x10`, socket 1 `+0x80` `0xff`->`0x11` |
+| UIB | `0xE0030000` | unchanged |
+| UIB ingress sockets | `0xE0038000` | socket 3 `+0x180` `0xff`->`0x10`, plus `+0x190`, `+0x990` |
+
+`0xff` in a socket's descriptor field is the "no descriptor / unused" encoding.
+Both the GPIF-side producer sockets and the USB-side consumer socket go from
+unused to a valid descriptor number when we `SET_INTERFACE`. So the FX3 firmware
+is creating and arming the DMA channel exactly as it should.
+
+**Conclusion: the GPIF is armed and waiting for pixels that never arrive.** The
+break is upstream of the FX3 -- in the CPLD, or on the receiver's output side.
+It is not in our USB setup, which is where the previous several days of effort
+went.
+
+### 7.3 The CPLD sees nothing [OBSERVED]
+
+Toggling HPD in software (`p0 0xB7` bit 1 -- active low) makes the source stop
+and restart, giving a clean before/during/after differential over 128 registers:
+
+- **All 64 CPLD registers `0x00`-`0x3F` are byte-identical** with video present
+  and absent. Not one bit moves.
+- The MST3367's registers track the video perfectly: `p0 0x55` `0x7f`<->`0x83`,
+  `p2 0x28/0x29` (H active) `0x0780`<->`0x2608`, `p0 0x56`, `0x58`, `0x5e`, `0x5f`
+  all follow.
+
+Setting bit 4 of CPLD `0x20` after `SET_INTERFACE` (the bring-up script clears it
+at line 103-104 having set it at line 86) reads back correctly as `0x15` and
+changes nothing.
+
+### 7.4 `p2 0x0E` is read-to-clear [OBSERVED] -- CORRECTION
+
+Earlier notes treat `p2 0x0E` reading `0x00` as evidence that nothing is
+happening, and the vendor's wait for `(v & 0x07) != 0` as therefore doomed. That
+reading was wrong: the register is a **read-to-clear latch**.
+
+```
+first read after bring-up writes : 0x90
+every subsequent read            : 0x00
+after HPD de-assert              : 0x80   (input lost latched)
+after HPD re-assert              : 0x90
+```
+
+So it is an event latch on input transitions, and every previous `0x00` was a
+drained latch rather than a dead register.
+
+### 7.5 Receiver output registers do not survive an input transition [OBSERVED]
+
+Three page-2 registers set during bring-up are cleared by an input transition
+and do **not** come back when the input returns:
+
+| reg | after bring-up | after HPD cycle |
+|---|---|---|
+| `p2 0x0D` | `0x15` | `0x01` |
+| `p2 0x10` | `0x07` | `0x00` |
+| `p2 0x16` | `0x04` | `0x00` |
+
+`p2 0x12` bit 7 sets while there is no input (`0x11` <-> `0x91`), so it reads as
+a "no signal" status bit.
+
+This matters because it means a bring-up performed before the source is stable
+gets partially undone. It is consistent with the vendor driver re-running
+`MST3367_HwInitialize` continuously during capture. Running our bring-up twice
+with a 3 s gap does not by itself produce data.

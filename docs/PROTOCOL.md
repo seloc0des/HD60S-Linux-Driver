@@ -392,14 +392,37 @@ So EP 0x81 is **demand-driven, not free-running**: it reports only after some
 vendor command arms it. The daemon therefore cannot rely on unsolicited status
 events, and `hd60s-probe` listening alone will never produce data.
 
-### 5.5 Input state is not exposed via a naive sweep [OBSERVED]
+### 5.5 The isochronous endpoint sends nothing unprompted [OBSERVED]
+
+Selecting a streaming alternate setting on interface 0 and submitting
+isochronous IN transfers on EP 0x83 succeeds at the USB level but yields no
+data whatsoever:
+
+| Alt | Bytes/uframe | Duration | Packets serviced | Errored | Bytes |
+|---|---|---|---|---|---|
+| 1 | 1024 | 5.0 s | 32064 | 0 | **0** |
+| 2 | 3072 | 6.0 s | 40064 | 0 | **0** |
+
+Both alt settings are accepted, the host reserves the bandwidth, and packets are
+serviced at roughly the full microframe rate with **zero errors** — the endpoint
+is healthy. The device simply returns zero-length packets.
+
+So video is not free-running: the stream must be **armed by a vendor command**
+before anything appears on EP 0x83. Combined with 5.4 (EP 0x81 equally silent),
+nothing at all happens on this device until the right control transfer is sent.
+
+Both `hd60s-isotest` runs left the device healthy — reads at address 0 still
+work afterwards, and the tool restores alt 0 (the zero-bandwidth idle setting)
+on exit.
+
+### 5.6 Input state is not exposed via a naive sweep [OBSERVED]
 
 Sweeps taken with no HDMI input and with a Switch connected at 1080p are
 **byte-identical** (`diff` empty). That is consistent with 5.1 and 5.3: the
 only responding request is a RAM read of a fixed code region, which of course
 does not change with input state. No status register has been located yet.
 
-### 5.6 Still unknown
+### 5.7 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

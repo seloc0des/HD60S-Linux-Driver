@@ -21,10 +21,11 @@ PROBE   := hd60s-probe
 DUMP    := hd60s-dumpram
 DAEMON  := hd60sd
 WRTEST  := hd60s-writetest
+ISOTEST := hd60s-isotest
 
 .PHONY: all clean install uninstall install-udev check-deps
 
-all: check-deps $(PROBE) $(DUMP) $(DAEMON) $(WRTEST)
+all: check-deps $(PROBE) $(DUMP) $(DAEMON) $(WRTEST) $(ISOTEST)
 
 check-deps:
 	@pkg-config --exists libusb-1.0 || { \
@@ -44,6 +45,9 @@ $(DUMP): tools/hd60s-dumpram.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
 $(WRTEST): tools/hd60s-writetest.o $(COMMON)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
+
+$(ISOTEST): tools/hd60s-isotest.o $(COMMON)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(LIBUSB_LIBS)
 
 # no libusb needed yet -- the capture half isn't wired up
@@ -71,4 +75,4 @@ uninstall:
 	udevadm control --reload-rules
 
 clean:
-	rm -f $(PROBE) $(DUMP) $(DAEMON) $(WRTEST) src/*.o tools/*.o
+	rm -f $(PROBE) $(DUMP) $(DAEMON) $(WRTEST) $(ISOTEST) src/*.o tools/*.o

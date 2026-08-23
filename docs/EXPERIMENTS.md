@@ -53,14 +53,20 @@ rest stall. This is device-to-host only — nothing is written.
 Run it twice, with and without an HDMI source connected, and diff. Any request
 whose payload changes with input state is a status register worth naming.
 
-## E4 — Does the stream endpoint produce anything at 480M?
+## E4 — Does the stream endpoint produce anything at 480M? (DONE)
 
-The device declares `bFunctionalitySupport = SuperSpeed`, so this may well
-return nothing. Worth one attempt to find out; a negative result is documented
-evidence that USB 2.0 is not a usable capture mode.
+```bash
+./hd60s-isotest --alt 2 --seconds 5
+./hd60s-isotest --alt 1 --seconds 4
+```
 
-Requires selecting alt setting 1 or 2 on interface 0 and submitting
-isochronous transfers on EP 0x83 — not yet implemented in the probe.
+Result: **no**. Both alt settings are accepted and packets are serviced at the
+full microframe rate with zero errors, but every packet is zero-length — 40064
+packets and 0 bytes at alt 2. The endpoint is healthy; the device just sends
+nothing.
+
+This is read-only and safe. It establishes that video must be armed by a vendor
+command, and that the silence is not a bandwidth or alt-setting problem.
 
 ## E4b — RAM window via bRequest 0xA0 (DONE)
 

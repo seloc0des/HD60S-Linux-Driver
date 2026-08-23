@@ -30,6 +30,13 @@ struct hd60s_framer {
 	int saw_blank;
 	unsigned long long frames, resyncs;
 	unsigned long long oddmark;      /* FF 00 00 KK with an unrecognised KK */
+	unsigned long long blank_lines, blank_dirty;  /* blanking that is not flat fill */
+	uint8_t dirty_sample[32];
+	int have_dirty;
+	size_t dirty_at;
+	unsigned long long badmark;      /* marker slot did not match at all */
+	uint8_t badsample[64];           /* 16 slots of 4 bytes */
+	int nbad;
 	uint8_t oddval[8];
 	int noddval;
 	hd60s_frame_cb on_frame;

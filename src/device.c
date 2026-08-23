@@ -317,18 +317,25 @@ static int alt_is_bulk(struct hd60s_dev *d, int alt, int *mps, int *burst)
 
 				if (ep->bEndpointAddress != HD60S_EP_STREAM_ISO)
 					continue;
-				*mps = ep->wMaxPacketSize & 0x7ff;
-				if ((ep->bmAttributes & 3) == LIBUSB_TRANSFER_TYPE_BULK) {
-					struct libusb_ss_endpoint_companion_descriptor *ss;
+				struct libusb_ss_endpoint_companion_descriptor *ss;
+				int isbulk = (ep->bmAttributes & 3) ==
+					     LIBUSB_TRANSFER_TYPE_BULK;
 
-					found = 1;
-					if (ep->extra_length > 0 &&
-					    libusb_get_ss_endpoint_companion_descriptor(
-						    NULL, ep, &ss) == 0) {
-						*burst = ss->bMaxBurst;
-						libusb_free_ss_endpoint_companion_descriptor(ss);
-					}
+				*mps = ep->wMaxPacketSize & 0x7ff;
+				/* On SuperSpeed the real per-interval size is
+				 * wBytesPerInterval, not wMaxPacketSize -- an iso
+				 * transfer sized from the latter asks for a
+				 * fraction of each burst and loses the rest. */
+				if (ep->extra_length > 0 &&
+				    libusb_get_ss_endpoint_companion_descriptor(
+					    NULL, ep, &ss) == 0) {
+					*burst = ss->bMaxBurst;
+					if (!isbulk && ss->wBytesPerInterval)
+						*mps = ss->wBytesPerInterval;
+					libusb_free_ss_endpoint_companion_descriptor(ss);
 				}
+				if (isbulk)
+					found = 1;
 			}
 		}
 	}
@@ -403,8 +410,7 @@ static int stream_start_bulk(struct hd60s_dev *d, int alt, int mps, int burst)
 
 int hd60s_stream_start(struct hd60s_dev *d, int alt)
 {
-	int pkt = (alt == 1) ? 1024 : 3072;
-	int i, rc, mps = 0, burst = 0;
+	int pkt, i, rc, mps = 0, burst = 0;
 
 	rc = libusb_claim_interface(d->h, HD60S_IF_STREAM);
 	if (rc != 0) {
@@ -420,6 +426,8 @@ int hd60s_stream_start(struct hd60s_dev *d, int alt)
 
 	if (alt_is_bulk(d, alt, &mps, &burst))
 		return stream_start_bulk(d, alt, mps, burst);
+
+	pkt = mps ? mps : 3072;   /* bytes per interval, from the SS companion */
 
 	for (i = 0; i < NUM_XFERS; i++) {
 		size_t len = (size_t)pkt * PKTS_PER_XFER;
@@ -446,7 +454,8 @@ int hd60s_stream_start(struct hd60s_dev *d, int alt)
 		log_err("no isochronous transfers could be submitted");
 		return -1;
 	}
-	log_info("streaming: alt %d, %d B/uframe, %d transfers", alt, pkt, d->live);
+	log_info("streaming: alt %d ISO, %d B/interval, %d transfers", alt, pkt,
+		 d->live);
 	return 0;
 }
 

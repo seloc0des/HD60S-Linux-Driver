@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -57,6 +58,45 @@ static void resync(struct hd60s_framer *f)
 static void take_line(struct hd60s_framer *f)
 {
 	if (f->line[HD60S_LINE_PIC + 3] == HD60S_MARK_BLANK) {
+		/* Blanking is normally flat YUY2 black (10 80 10 80 ...). If it
+		 * ever carries something else, that is where embedded audio
+		 * would live -- so check rather than assume. */
+		static const uint64_t flat = 0x8010801080108010ULL;
+		size_t i;
+
+		f->blank_lines++;
+		for (i = 0; i + 8 <= HD60S_LINE_PIC; i += 8) {
+			uint64_t w;
+
+			memcpy(&w, f->line + i, sizeof(w));
+			if (w != flat) {
+				f->blank_dirty++;
+				if (!f->have_dirty) {
+					const char *dp = getenv("HD60S_DUMP_BLANK");
+
+					size_t avail = HD60S_LINE_LEN - i;
+					size_t n = avail < sizeof(f->dirty_sample)
+							   ? avail
+							   : sizeof(f->dirty_sample);
+
+					memset(f->dirty_sample, 0,
+					       sizeof(f->dirty_sample));
+					memcpy(f->dirty_sample, f->line + i, n);
+					f->have_dirty = 1;
+					f->dirty_at = i;
+					if (dp) {
+						FILE *df = fopen(dp, "wb");
+
+						if (df) {
+							fwrite(f->line, 1,
+							       HD60S_LINE_LEN, df);
+							fclose(df);
+						}
+					}
+				}
+				break;
+			}
+		}
 		f->fpos = 0;        /* vertical blanking: next active line is line 0 */
 		f->saw_blank = 1;
 		return;
@@ -97,6 +137,14 @@ void hd60s_framer_push(struct hd60s_framer *f, const uint8_t *data, size_t len)
 			/* a well-formed marker with an unknown type byte would be
 			 * a line carrying something other than picture -- audio,
 			 * most likely. Record it rather than silently resyncing. */
+			/* keep a few raw slots -- if audio is multiplexed into
+			 * this 4-byte-per-line slot it will show up here as
+			 * varying data rather than a constant header */
+			f->badmark++;
+			if (f->nbad < 16) {
+				memcpy(f->badsample + 4 * f->nbad, m, 4);
+				f->nbad++;
+			}
 			if (m[0] == 0xFF && m[1] == 0x00 && m[2] == 0x00) {
 				int k, known = 0;
 

@@ -349,6 +349,30 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			log_info("frames %llu, resyncs %llu, odd markers %llu%s",
 				 g_framer.frames, g_framer.resyncs,
 				 g_framer.oddmark, odd);
+			log_info("blanking lines %llu, non-flat %llu",
+				 g_framer.blank_lines, g_framer.blank_dirty);
+			if (g_framer.nbad) {
+				char b[16 * 12 + 1] = "";
+
+				for (k = 0; k < g_framer.nbad; k++)
+					snprintf(b + strlen(b), sizeof(b) - strlen(b),
+						 "%02x%02x%02x%02x ",
+						 g_framer.badsample[4 * k],
+						 g_framer.badsample[4 * k + 1],
+						 g_framer.badsample[4 * k + 2],
+						 g_framer.badsample[4 * k + 3]);
+				log_info("marker misses %llu, slots: %s",
+					 g_framer.badmark, b);
+			}
+			if (g_framer.have_dirty) {
+				char h[3 * 32 + 1];
+
+				for (k = 0; k < 32; k++)
+					sprintf(h + 3 * k, "%02x ",
+						g_framer.dirty_sample[k]);
+				log_info("non-flat blanking at byte %zu: %s",
+					 g_framer.dirty_at, h);
+			}
 		}
 		hd60s_close(&dev);
 	}

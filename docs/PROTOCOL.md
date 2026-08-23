@@ -1373,7 +1373,66 @@ datapath are therefore independent problems, and only the second remains.
 (`0x6E452`-`0x6E474`, which waits for `(p2 0x0E & 0x07) != 0`) would still time
 out. That is now the sharpest remaining lead.
 
-### 5.23 Still unknown
+### 5.23 With the receiver locked, both data endpoints are still silent [OBSERVED]
+
+This is the cleanest evidence the project has produced, because for the first
+time the receiver side is provably correct.
+
+State with a live 1080p60 source and the full bring-up applied:
+
+| | |
+|---|---|
+| `p0 0x55` | `0x7f` — validity gate **passes** |
+| V total | 1125 |
+| H total | 2200 |
+| H active (p2 `0x28/0x29`) | 1920 |
+| stream enable `p1 0x24` | `0x41` |
+| mute pair `p0 0xB3` / `p2 0x27` | `0x00` / `0x00` — un-muted |
+| scanner regs `p2 0x11`/`0x12` | `0x7a` / `0x11` — real values |
+| CPLD `0x20` / `0x10` | `0x05` / `0xfe` |
+
+Everything the vendor driver configures is configured, and the receiver reports
+a valid, correctly-measured 1080p60 signal.
+
+Yet:
+
+| Endpoint | Result |
+|---|---|
+| iso `0x83` | 0 bytes in ~80000 serviced packets, 0 errors |
+| interrupt `0x81` | 0 packets, even after uploading a scan table with `0xC6` |
+
+#### What was tried
+
+Poking every plausible CPLD datapath register while streaming — `0x3b = 0x02`
+(HDMI route), `0x20` with and without bit 4, `0x20 = 0x75`, `0x00`, `0x10 =
+0xFC`/`0xFE`, port-1 `0x01`/`0x11`, and `0x21`-`0x24` — produced **zero bytes in
+every case**.
+
+The firmware register scanner (`bRequest 0xC6` with a 56-byte descriptor table,
+both `wIndex` forms and two scan periods) is accepted but produces nothing on the
+interrupt endpoint, even though the registers it scans now hold valid data.
+
+#### The interrupt endpoint is the tell
+
+EP `0x81` needs no meaningful bandwidth — 64 bytes per millisecond. If the FX3
+firmware were running its data-producing logic at all, the scanner should report
+there regardless of link speed. It does not.
+
+**Control plane perfect, both data endpoints mute, zero errors** is the signature
+of firmware that has not started its DMA channels.
+
+This revives the reading that 5.18 retracted. That retraction was based on the
+alternate-setting tier arithmetic selecting alt 2 on a High Speed link — but that
+only shows which alt the *host driver* picks, not that the *device firmware* will
+stream. The two are different claims and this document conflated them.
+
+Elgato's published requirement for this model is USB 3.0, and the device's own
+BOS descriptor reports `bFunctionalitySupport = SuperSpeed`.
+
+[UNKNOWN] Whether any reduced-rate mode exists that would stream over High Speed.
+No vendor command to select capture resolution has been identified.
+
+### 5.24 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

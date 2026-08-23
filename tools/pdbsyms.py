@@ -24,34 +24,56 @@ import re
 import struct
 import sys
 
-S_PUB32 = 0x110E
+S_PUB32 = 0x110E     # public symbol:  flags u32, off u32, seg u16, name
+S_LPROC32 = 0x110F   # local procedure  } same tail layout:
+S_GPROC32 = 0x1110   # global procedure } ... off u32 @+32, seg u16 @+36, name @+39
+
+# (record type) -> (offset of `off` field, offset of name) relative to record start
+LAYOUT = {
+    S_PUB32:   (8, 14),    # flags u32 @+4, then off @+8, seg @+12
+    S_LPROC32: (32, 39),
+    S_GPROC32: (32, 39),
+}
+
 NAME_RE = re.compile(rb'^[A-Za-z_?$@][\x20-\x7e]{2,}$')
 
 
 def scan(data):
+    """Linear scan for symbol records.
+
+    PDBs are paged MSF containers, so a record can straddle a page boundary and
+    be missed. That is acceptable here -- we want enough names to navigate the
+    disassembly, not a faithful reader.
+    """
     syms, i, n = {}, 0, len(data)
 
-    while i < n - 16:
-        if data[i + 2] | (data[i + 3] << 8) != S_PUB32:
+    while i < n - 40:
+        rectyp = data[i + 2] | (data[i + 3] << 8)
+        lay = LAYOUT.get(rectyp)
+        if lay is None:
             i += 1
             continue
 
+        off_at, name_at = lay
         reclen = data[i] | (data[i + 1] << 8)
-        if not (14 <= reclen <= 4096) or i + 2 + reclen > n:
+        if not (name_at <= reclen + 2 <= 4096) or i + 2 + reclen > n:
             i += 1
             continue
 
-        _flags, off, seg = struct.unpack_from('<IIH', data, i + 4)
+        off, seg = struct.unpack_from('<IH', data, i + off_at)
         if not (1 <= seg <= 32) or off >= 0x8000000:
             i += 1
             continue
 
-        end = data.find(b'\0', i + 14, i + 2 + reclen)
-        if end <= i + 14 or not NAME_RE.match(data[i + 14:end]):
+        end = data.find(b'\0', i + name_at, i + 2 + reclen)
+        if end <= i + name_at or not NAME_RE.match(data[i + name_at:end]):
             i += 1
             continue
 
-        syms.setdefault(data[i + 14:end].decode('ascii'), (seg, off))
+        # public symbols are the more reliable record, so let them win
+        name = data[i + name_at:end].decode('ascii')
+        if rectyp == S_PUB32 or name not in syms:
+            syms[name] = (seg, off)
         i += 2 + reclen
 
     return syms

@@ -170,11 +170,89 @@ static int enable_mcu(libusb_device_handle *h)
 	return 0;
 }
 
+/* MCU proxy. bRequest 0xC0 serves two different interfaces, distinguished by
+ * wValue: below 0x100 it is direct I2C (slave address), while 0x50xx tunnels a
+ * packet to the Nuvoton housekeeping MCU. From the transports at VMA 0x627f0
+ * (write) and 0x62880 (read), both of which do `or di, 0x5000`.
+ *
+ *   write:  bmRequestType 0x40, bRequest 0xC0, wValue = 0x5000|cmd, data
+ *   read:   bmRequestType 0xC0, bRequest 0xC0, wValue = 0x5000|cmd, data
+ */
+static int mcu_write(libusb_device_handle *h, uint8_t cmd, uint8_t *buf, int len)
+{
+	return libusb_control_transfer(h, RT_OUT, REQ_I2C,
+				       (uint16_t)(0x5000 | cmd), 0, buf,
+				       (uint16_t)len, 1000);
+}
+
+static int mcu_read(libusb_device_handle *h, uint8_t cmd, uint8_t *buf, int len)
+{
+	memset(buf, 0, (size_t)len);
+	return libusb_control_transfer(h, RT_IN, REQ_I2C,
+				       (uint16_t)(0x5000 | cmd), 0, buf,
+				       (uint16_t)len, 1000);
+}
+
+/* GetMCUROMVersion() from the vendor driver (VMA 0x1c240). The packet is an
+ * 0xAB preamble, a length byte, then the command.
+ *
+ * Two behaviours worth knowing, both established on hardware:
+ *   - `33 44 55` is the "no valid reply" pattern. It comes back if you read
+ *     without having written, or after a command the MCU rejects.
+ *   - The reply buffer is shared, not per-command: after a successful exchange
+ *     any cmd value in wValue reads the same 3 bytes back. So the reply must be
+ *     read promptly, and the cmd byte on the read side proves nothing.
+ *
+ * The first exchange after the handshake sometimes returns the idle pattern, so
+ * retry rather than reporting a spurious failure.
+ */
+static int mcu_reply_idle(const uint8_t *r)
+{
+	return r[0] == 0x33 && r[1] == 0x44 && r[2] == 0x55;
+}
+
+static void mcu_version(libusb_device_handle *h)
+{
+	uint8_t req[5] = { 0xab, 0x03, 0x12, 0x34, 0x57 };
+	uint8_t rep[3];
+	int rc, try_;
+
+	for (try_ = 0; try_ < 5; try_++) {
+		rc = mcu_write(h, 0x66, req, sizeof(req));
+		if (rc != (int)sizeof(req)) {
+			log_err("MCU write rejected: %s",
+				rc < 0 ? libusb_error_name(rc) : "short");
+			return;
+		}
+		usleep(150 * 1000);
+
+		rc = mcu_read(h, 0x66, rep, sizeof(rep));
+		if (rc != (int)sizeof(rep)) {
+			log_err("MCU read failed: %s",
+				rc < 0 ? libusb_error_name(rc) : "short");
+			return;
+		}
+		if (!mcu_reply_idle(rep))
+			break;
+		log_dbg("attempt %d returned the idle pattern, retrying", try_ + 1);
+	}
+
+	if (mcu_reply_idle(rep)) {
+		printf("MCU reply: 33 44 55 (idle -- no valid reply after %d tries)\n",
+		       try_);
+		return;
+	}
+	printf("MCU ROM version: %02x %02x %02x\n", rep[0], rep[1], rep[2]);
+	printf("  vendor driver compares against 51 10 27 -> %s\n",
+	       (rep[0] == 0x51 && rep[1] == 0x10 && rep[2] == 0x27)
+		       ? "MATCH" : "different");
+}
+
 int main(int argc, char **argv)
 {
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
-	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0, do_en = 0;
+	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0, do_en = 0, do_mcuver = 0;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -186,6 +264,9 @@ int main(int argc, char **argv)
 			do_write = 1;
 		} else if (!strcmp(argv[i], "--len") && i + 1 < argc) {
 			rlen = atoi(argv[++i]);
+		} else if (!strcmp(argv[i], "--mcu-version")) {
+			do_mcuver = 1;
+			scan = 0;
 		} else if (!strcmp(argv[i], "--enable-mcu")) {
 			do_en = 1;
 		} else if (!strcmp(argv[i], "--i2c-scan")) {
@@ -198,6 +279,7 @@ int main(int argc, char **argv)
 				"usage: %s [--handshake] [--reg R [--write V]]\n"
 				"  --handshake: run the MCU-presence handshake first\n"
 				"  --enable-mcu: run EnableMCU (reg 0x39=0xC0, reg 0x34=0x40)\n"
+				"  --mcu-version: read the MCU ROM version via the MCU proxy\n"
 				"  --i2c-scan : scan I2C slaves via bRequest 0xC0 (reads only)\n"
 				"  no args   : scan registers 0x00-0xff (reads only)\n"
 				"  --reg R   : read register R\n"
@@ -222,6 +304,13 @@ int main(int argc, char **argv)
 		handshake(h);
 	if (do_en)
 		enable_mcu(h);
+
+	if (do_mcuver) {
+		mcu_version(h);
+		libusb_close(h);
+		libusb_exit(ctx);
+		return 0;
+	}
 
 	if (do_i2c) {
 		i2c_scan(h);

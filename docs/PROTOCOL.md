@@ -670,6 +670,9 @@ reads echo it until something displaces it.
 **Conclusion: the `0xC0` bridge is not returning I2C data at all on this device
 in this state.** Do not read anything into the byte values.
 
+**And the scan was probing the wrong half of the command.** See 5.10 — `0xC0`
+serves two interfaces selected by `wValue`, and the useful one is `0x50xx`.
+
 [UNKNOWN] What actually brings the peripherals up. Candidates from the symbol
 table, none yet transcribed: `CY3014_PowerDownPeripherals` and its inverse, and
 `CDevice::OnSetCustomDebugMcuAccessEnableProperty`.
@@ -677,7 +680,83 @@ table, none yet transcribed: `CY3014_PowerDownPeripherals` and its inverse, and
 `./hd60s-reg --i2c-scan` reports the uniform-reply case explicitly rather than
 printing 128 false positives.
 
-### 5.10 Still unknown
+### 5.10 The MCU proxy — talking to the Nuvoton [OBSERVED — CONFIRMED ON HARDWARE]
+
+`bRequest 0xC0` is **two interfaces**, selected by the range of `wValue`:
+
+| `wValue` | Interface |
+|---|---|
+| `< 0x100` | direct I2C — slave address in `wValue`, register in `wIndex` |
+| `0x50xx` | **MCU proxy** — tunnels a packet to the Nuvoton housekeeping MCU |
+
+Both transports do `or di, 0x5000` on a command byte (VMA `0x627f0` for write,
+`0x62880` for read):
+
+```
+write:  bmRequestType 0x40, bRequest 0xC0, wValue = 0x5000 | cmd, wIndex 0, data
+read:   bmRequestType 0xC0, bRequest 0xC0, wValue = 0x5000 | cmd, wIndex 0, data
+```
+
+This is the "tunneled register form" the third-party analysis referred to but
+did not publish.
+
+#### Packet format
+
+`0xAB` preamble, a length byte, then the command bytes.
+
+#### `GetMCUROMVersion` — worked end to end
+
+From VMA `0x1c240`:
+
+```
+write  wValue 0x5066 <- ab 03 12 34 57      (5 bytes)
+delay  150 ms
+read   wValue 0x5066 -> 3 bytes
+```
+
+**Result on hardware: `51 10 27`** — byte-for-byte what the vendor driver
+compares against (`cmp bl,0x51` / `cmp bpl,0x10` / `cmp sil,0x27`). Repeatable
+across runs.
+
+This is the first exchange with real, independently-verifiable content: we sent
+a command the driver sends, and the device replied with the value the driver
+expects.
+
+#### Behaviours established by experiment
+
+| Test | Reply |
+|---|---|
+| read without writing first | `33 44 55` |
+| write the correct command, then read | `51 10 27` |
+| read 8 bytes instead of 3 | `51 10 27 ff ff ff ff ff` |
+| write a **bogus** payload (`ab 03 ff ff ff`), then read | `33 44 55` |
+| read back using a *different* cmd byte (`0x67`, `0x11`) | `51 10 27` |
+
+Two things follow:
+
+- **`33 44 55` is the "no valid reply" pattern**, not data. A rejected command
+  produces it, which is how we know the MCU actually parses the packet rather
+  than echoing.
+- **The reply buffer is shared, not per-command.** After a successful exchange,
+  any `cmd` in `wValue` reads the same bytes. So the reply must be read promptly,
+  and a matching `cmd` on the read side proves nothing by itself.
+
+The first exchange after the handshake sometimes returns the idle pattern, so
+`hd60s-reg --mcu-version` retries.
+
+#### Hazards — do not invoke
+
+Two MCU functions in the driver are genuine brick risks and are **deliberately
+not implemented** here:
+
+| Symbol | VMA | Why |
+|---|---|---|
+| `Jump2LDROM` | `0x1c510` | puts the Nuvoton into its loader ROM, i.e. firmware-update mode |
+| `UpdateAPROM` | `0x4b130` | rewrites the MCU application firmware |
+
+`CommandMCUReset` (`0x19e50`) is milder but still resets the MCU.
+
+### 5.11 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

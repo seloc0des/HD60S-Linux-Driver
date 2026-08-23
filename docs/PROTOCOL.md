@@ -326,37 +326,6 @@ Note the FX3 boot protocol treats a **zero-length** `0xA0` as "jump to the
 address in wValue/wIndex". `hd60s-writetest` refuses zero-length writes so this
 cannot happen by accident.
 
-### 5.2b No Microsoft OS descriptors [OBSERVED]
-
-Devices shipping Windows drivers often expose a Microsoft OS String Descriptor
-at string index `0xEE`, which *names a vendor request code*. That would have
-handed us a vendor `bRequest` without any blind probing. The HD60 S does not
-have one — index `0xEE` stalls.
-
-The device exposes only three strings (`Elgato Systems`, `Game Capture HD60 S`,
-and the serial), so there is nothing to learn there either.
-
-`DEVICE_QUALIFIER` and `OTHER_SPEED_CONFIG` are present and describe the
-full-speed personality: a single interface with the same iso EP 0x83 at
-0 / 64 / 128 bytes per frame, and no equivalent of interface 1. Nothing useful
-for capture, but it confirms the device's descriptor set is complete and
-conventional — the vendor protocol is not hidden in a nonstandard descriptor.
-
-#### Where the firmware could still come from
-
-The SYSMEM handler addresses (`0x4001ea9c`, `0x4000302c`, `0x4001f26c`,
-`0x40003038`, `0x40003044`, `0x4001f270`, `0x4001f274`) are useful anchors *if*
-the firmware image is obtained another way. Two routes that don't involve
-poking the device:
-
-1. **Elgato's firmware update package.** The image ships in the vendor updater;
-   disassembling it offline carries zero risk to the hardware and would expose
-   the vendor command dispatch directly. Best next avenue.
-2. **`usbmon` capture** of the official driver on Windows/macOS (E5).
-
-Reading the SPI flash in-circuit is a third route but needs a hardware
-programmer on the pads.
-
 ### 5.2 A non-zero `wIndex` wedges EP0 [OBSERVED — HAZARD]
 
 Every read attempted so far falls into a clean pattern:
@@ -396,20 +365,52 @@ continuing (continuing is what escalated a stall into a bus dropout), paces
 transfers with `--delay` (default 5 ms), and offers `--reset` to attempt
 recovery without a replug.
 
-### 5.3 `0xC0`, `0xC2`, `0xC3` — probably not real commands [OBSERVED]
+### 5.3 No Microsoft OS descriptors [OBSERVED]
 
-The sweep showed these returning 64 bytes each, but the payload is the *same
-vector-table content* `0xA0` returned, with only the first one or two bytes
-differing (`0xC2` → `01`, `0xC3` → `ff ff`). Since the sweep issues `0xA0`
-first, the most economical explanation is that these codes are unimplemented
-and the device is returning a **stale EP0 buffer**, with a short status value
-written over the front.
+Devices shipping Windows drivers often expose a Microsoft OS String Descriptor
+at string index `0xEE`, which *names a vendor request code*. That would have
+handed us a vendor `bRequest` without any blind probing. The HD60 S does not
+have one — index `0xEE` stalls.
 
-Do not treat these as commands without independent confirmation. Re-run the
-sweep on a freshly replugged device *without* issuing `0xA0` first: if the
-payload is then absent or different, the stale-buffer theory is confirmed.
+The device exposes only three strings (`Elgato Systems`, `Game Capture HD60 S`,
+and the serial), so there is nothing to learn there either.
 
-### 5.4 Interrupt endpoint 0x81 is silent [OBSERVED]
+`DEVICE_QUALIFIER` and `OTHER_SPEED_CONFIG` are present and describe the
+full-speed personality: a single interface with the same iso EP 0x83 at
+0 / 64 / 128 bytes per frame, and no equivalent of interface 1. Nothing useful
+for capture, but it confirms the device's descriptor set is complete and
+conventional — the vendor protocol is not hidden in a nonstandard descriptor.
+
+#### Where the firmware could still come from
+
+The SYSMEM handler addresses (`0x4001ea9c`, `0x4000302c`, `0x4001f26c`,
+`0x40003038`, `0x40003044`, `0x4001f270`, `0x4001f274`) are useful anchors *if*
+the firmware image is obtained another way. Two routes that don't involve
+poking the device:
+
+1. **Elgato's firmware update package.** The image ships in the vendor updater;
+   disassembling it offline carries zero risk to the hardware and would expose
+   the vendor command dispatch directly. Best next avenue.
+2. **`usbmon` capture** of the official driver on Windows/macOS (E5).
+
+Reading the SPI flash in-circuit is a third route but needs a hardware
+programmer on the pads.
+
+### 5.4 `0xC0`, `0xC2`, `0xC3` in the vendor sweep [OBSERVED]
+
+The EP0 sweep showed these returning 64 bytes each, but the payload was the
+*same vector-table content* `0xA0` returned, with only the first one or two
+bytes differing (`0xC2` -> `01`, `0xC3` -> `ff ff`). Since the sweep issues
+`0xA0` first, the economical explanation is a **stale EP0 buffer** with a short
+status value written over the front.
+
+> **Update.** These are not "not real commands", as this section previously
+> concluded. The vendor driver (5.9) uses `0xC1` for register access, `0xC2` on
+> one init path, and `0xC5`/`0xC6` for MCU access. They are real — they simply
+> do nothing useful when called with `wValue = 0`, which is all the sweep ever
+> tried. See 5.8 for why that made the whole command set invisible.
+
+### 5.5 Interrupt endpoint 0x81 is silent [OBSERVED]
 
 Zero packets in 40 s, including across a physical HDMI connect and disconnect,
 and zero in 20 s with a Nintendo Switch connected and outputting.
@@ -418,7 +419,7 @@ So EP 0x81 is **demand-driven, not free-running**: it reports only after some
 vendor command arms it. The daemon therefore cannot rely on unsolicited status
 events, and `hd60s-probe` listening alone will never produce data.
 
-### 5.5 The isochronous endpoint sends nothing unprompted [OBSERVED]
+### 5.6 The isochronous endpoint sends nothing unprompted [OBSERVED]
 
 Selecting a streaming alternate setting on interface 0 and submitting
 isochronous IN transfers on EP 0x83 succeeds at the USB level but yields no
@@ -434,73 +435,73 @@ serviced at roughly the full microframe rate with **zero errors** — the endpoi
 is healthy. The device simply returns zero-length packets.
 
 So video is not free-running: the stream must be **armed by a vendor command**
-before anything appears on EP 0x83. Combined with 5.4 (EP 0x81 equally silent),
+before anything appears on EP 0x83. Combined with 5.5 (EP 0x81 equally silent),
 nothing at all happens on this device until the right control transfer is sent.
 
 Both `hd60s-isotest` runs left the device healthy — reads at address 0 still
 work afterwards, and the tool restores alt 0 (the zero-bandwidth idle setting)
 on exit.
 
-### 5.6 Input state is not exposed via a naive sweep [OBSERVED]
+### 5.7 Input state is not exposed via a naive sweep [OBSERVED]
 
 Sweeps taken with no HDMI input and with a Switch connected at 1080p are
 **byte-identical** (`diff` empty). That is consistent with 5.1 and 5.3: the
 only responding request is a RAM read of a fixed code region, which of course
 does not change with input state. No status register has been located yet.
 
-### 5.7 The real command set is class-interface, and it is gated [OBSERVED]
+### 5.8 Why the blind sweeps found nothing [OBSERVED]
 
-Static analysis of the official **Windows** driver, published by the
-[hd60s-linux](https://github.com/Hydrogen2K/hd60s-linux) project in
-`docs/vendor-driver-analysis.md`, reports that the device is driven with
-`URB_FUNCTION_CLASS_INTERFACE` requests — `bmRequestType` `0xA1` (IN) / `0x21`
-(OUT) — **not** the vendor requests swept in 5.1. Their reported codes:
+Superseded in part by 5.9, which establishes the protocol from the vendor
+driver. Kept because the *reason* every probe failed is worth recording.
 
-| bRequest | Purpose (per third-party analysis) |
+Third-party static analysis published by the
+[hd60s-linux](https://github.com/Hydrogen2K/hd60s-linux) project reported these
+request codes, and described them as `URB_FUNCTION_CLASS_INTERFACE`
+(`bmRequestType 0xA1`/`0x21`):
+
+| bRequest | Purpose (per that analysis) |
 |---|---|
-| `0xc0` | direct register read/write, `wValue` = bank, `wIndex` = register, 1-byte payload |
-| `0xc1` | internal register transaction (bit-banged) |
+| `0xc0` | direct register read/write |
+| `0xc1` | internal register transaction |
 | `0xa0` | EEPROM reads |
 | `0xa6` | debug / board-memory reads |
 | `0xaa` | MCU proxy traffic |
-| `0xc2`, `0xc6`, `0xc7`, `0xec` | seen in the PnP initialisation path |
+| `0xc2`, `0xc6`, `0xc7`, `0xec` | PnP initialisation path |
 
-This is **third-party analysis we have not confirmed**, and it corrects an
-assumption in this document: our own sweep only covered vendor requests
-(`0xC0`/`0xC1` request *types*), so it could never have found a class-interface
-command. That is very likely why only `0xA0` ever answered.
+The **codes are right**; the **transfer type is not**. Disassembling
+`SendVendorCommandRequest` (5.9) shows URB function `0x17` =
+`URB_FUNCTION_VENDOR_DEVICE`, i.e. `bmRequestType 0xC0`/`0x40`. Probing the
+class space on real hardware confirms it — 256 codes each at `0xA1`, `0xA0` and
+`0xC2` all stall, as does bank `0x98` under every code above.
 
-#### What our hardware says [OBSERVED]
+#### The actual reason we missed it
 
-Sweeping the class space, reads only:
+Our EP0 sweep used `bmRequestType 0xC0` and did try `bRequest 0xC1`. Both were
+correct. It failed on one parameter: **`wValue = 0`**.
 
-| bmRequestType | Codes tried | Responses |
-|---|---|---|
-| `0xA1` class, IN, interface | 0x00–0xff | **0** |
-| `0xA0` class, IN, device | 0x00–0xff | **0** |
-| `0xC2` vendor, IN, endpoint | 0x00–0xff | **0** |
+`wValue` is the register selector, so `wValue = 0` asks for register `0x00` —
+which does not exist. Measured:
 
-And the documented direct register form against bank `0x98` (the bank their
-confirmed sequence starts with), registers `0x00`–`0xff`:
-
-| Request code | Registers responding |
+| Request | Result |
 |---|---|
-| `0xc0`, `0xc1`, `0xa6`, `0xaa`, `0xc2`, `0xc6`, `0xc7`, `0xec` | **0** each |
+| `0xC1`, `wValue 0x00`, wLength 1 | stall |
+| `0xC1`, `wValue 0x00`, wLength 64 | stall |
+| `0xC1`, `wValue 0x34`, wLength 1 | `0x01` |
+| `0xC1`, `wValue 0x34`, wLength 64 | `0x01` (64 bytes returned) |
 
-Nothing responds. This **independently corroborates** their finding that direct
-register access fails on a power-on device, and that the official driver first
-performs a *sensitive MCU-presence handshake* before register access becomes
-functional — after which a "tunneled register form" is used instead.
+`wLength` is irrelevant — the device happily returns 64 bytes. Before the
+handshake **only register `0x34` answers at all**, so a sweep had a 1-in-256
+chance of stumbling on it even with the right request code.
 
-That handshake is deliberately not published (`the handshake and proxy sequence
-are intentionally not implemented without a trace`), so it cannot be lifted from
-their work.
+The write direction is worse: value in the high byte of `wValue`, no data stage,
+so it is invisible to any sweep that varies only `bRequest`.
 
-**Consequence:** the gate is the handshake, not the command codes. Knowing
-`0xc0` is the register accessor does not help while the device refuses register
-access until it has been unlocked in a way nobody has published.
+**Lesson:** sweeping one setup-packet field while pinning the rest to zero
+explores a line through the space, not the space. Where a device multiplexes a
+register file through `wValue`, zero is very likely the one value that is not a
+register.
 
-### 5.8 Register protocol and the MCU handshake [OBSERVED — CONFIRMED ON HARDWARE]
+### 5.9 Register protocol and the MCU handshake [OBSERVED — CONFIRMED ON HARDWARE]
 
 Recovered by disassembling the vendor Windows driver, then **verified on the
 real device**. See `docs/VENDOR-DRIVER.md` for how the driver was obtained and
@@ -556,8 +557,8 @@ the first poll. The register map changes as a result:
 | `0x34` | `0x00` | `0x01` |
 | `0x39` | *stalls* | `0x01` |
 
-Before the handshake only register `0x34` answers a read at all. This is the
-gate described in 5.7 — and it is now open.
+Before the handshake only register `0x34` answers a read at all. That is the
+gate every earlier probe ran into (5.8), and it is now open.
 
 `./hd60s-reg --handshake` performs it and rescans.
 
@@ -604,7 +605,7 @@ buffer are not written in the visible basic block. [UNKNOWN]
 | `0xC5`, `0xC6` | MCU access, used by `CY3014_MCU_Exist` |
 | `0xA0` | EZ-USB data (`CY3014_Get/SetEzusbData`) — the 255-byte window in 5.1 |
 
-### 5.9 Still unknown
+### 5.10 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

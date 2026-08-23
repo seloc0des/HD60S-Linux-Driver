@@ -112,7 +112,16 @@ the Windows-driver analysis names.
 This corroborates the third-party finding that register access is gated behind
 an MCU-presence handshake. Read-only and safe.
 
-## E5 — Full command set (blocked)
+## E9 — Register protocol + MCU handshake (DONE)
+
+```bash
+./hd60s-reg --handshake
+```
+
+Recovered from the vendor driver and verified on hardware. See
+`docs/PROTOCOL.md` 5.9. This superseded E5 -- no usbmon trace was needed.
+
+## E5 — Full command set (SUPERSEDED by E9)
 
 The vendor command set cannot be derived by probing alone -- E4b established
 that the RAM read cannot reach the SYSMEM where the handler lives. Two routes

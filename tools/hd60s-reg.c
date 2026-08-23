@@ -27,10 +27,19 @@
 #define RT_IN (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN | LIBUSB_RECIPIENT_DEVICE)
 #define RT_OUT (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT | LIBUSB_RECIPIENT_DEVICE)
 
+/* rlen is normally 1 -- the vendor driver always asks for exactly one byte.
+ * It is adjustable only so we can show that asking for more is what made the
+ * original blind sweep miss this command. */
+static int reg_read_n(libusb_device_handle *h, uint8_t reg, uint8_t *out, int rlen)
+{
+	memset(out, 0, (size_t)rlen);
+	return libusb_control_transfer(h, RT_IN, REQ_REG, reg, 0, out,
+				       (uint16_t)rlen, 1000);
+}
+
 static int reg_read(libusb_device_handle *h, uint8_t reg, uint8_t *out)
 {
-	*out = 0;
-	return libusb_control_transfer(h, RT_IN, REQ_REG, reg, 0, out, 1, 1000);
+	return reg_read_n(h, reg, out, 1);
 }
 
 static int reg_write(libusb_device_handle *h, uint8_t reg, uint8_t val)
@@ -82,7 +91,7 @@ int main(int argc, char **argv)
 {
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
-	int i, do_write = 0, scan = 1, rc, do_hs = 0;
+	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -92,6 +101,8 @@ int main(int argc, char **argv)
 		} else if (!strcmp(argv[i], "--write") && i + 1 < argc) {
 			val = strtol(argv[++i], NULL, 0);
 			do_write = 1;
+		} else if (!strcmp(argv[i], "--len") && i + 1 < argc) {
+			rlen = atoi(argv[++i]);
 		} else if (!strcmp(argv[i], "--handshake")) {
 			do_hs = 1;
 		} else {
@@ -139,13 +150,17 @@ int main(int argc, char **argv)
 		rc = reg_write(h, (uint8_t)reg, (uint8_t)val);
 		printf("write -> %s\n", rc == 0 ? "ACCEPTED" : libusb_error_name(rc));
 	} else {
-		uint8_t v;
+		uint8_t v[512];
 
-		rc = reg_read(h, (uint8_t)reg, &v);
-		if (rc == 1)
-			printf("reg 0x%02lx = 0x%02x\n", reg, v);
+		if (rlen < 1 || rlen > (int)sizeof(v))
+			rlen = 1;
+		rc = reg_read_n(h, (uint8_t)reg, v, rlen);
+		if (rc > 0)
+			printf("reg 0x%02lx (wLength %d) -> %d byte(s), first = 0x%02x\n",
+			       reg, rlen, rc, v[0]);
 		else
-			printf("reg 0x%02lx -> %s\n", reg, libusb_error_name(rc));
+			printf("reg 0x%02lx (wLength %d) -> %s\n", reg, rlen,
+			       libusb_error_name(rc));
 	}
 
 	libusb_close(h);

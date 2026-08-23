@@ -21,7 +21,7 @@ nothing until the very end.
   stage 2   │ hd60s-probe        read-only EP0 + irq ep  │  WRITTEN,
             │                    → fills docs/PROTOCOL   │  needs libusb
             └────────────────────────────────────────────┘
-                              │  (protocol known)
+                              │  (register protocol + handshake known)
             ┌────────────────────────────────────────────┐
   stage 3   │ hd60sd             libusb capture daemon   │  BLOCKED on
             │   proto.c  state machine                   │  stage 2

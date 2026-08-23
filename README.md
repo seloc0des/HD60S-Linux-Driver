@@ -3,10 +3,16 @@
 Userspace-first Linux support for the **original** Elgato Game Capture HD60 S
 (`0fd9:005e`). Not affiliated with or supported by Elgato.
 
-> **Status: reverse engineering.** Descriptor tooling works today. There is no
-> working capture path yet, because the vendor protocol is undocumented and
-> hasn't been captured. See [docs/PROTOCOL.md](docs/PROTOCOL.md) for exactly
-> what is known versus guessed — nothing here is invented.
+> **Status: protocol recovered, capture not yet implemented.**
+>
+> The register protocol and the MCU-presence handshake have been recovered from
+> Elgato's own Windows driver (which ships with debug symbols) and **verified on
+> real hardware** — see [docs/PROTOCOL.md](docs/PROTOCOL.md) §5.9 and
+> [docs/VENDOR-DRIVER.md](docs/VENDOR-DRIVER.md).
+>
+> What works: register read/write, the handshake, and the whole output pipeline.
+> What does not: starting a video stream. Every fact is tagged by how it is
+> known; nothing here is invented.
 
 The HD60 S+ is different hardware and is **not** covered.
 
@@ -40,7 +46,25 @@ sudo make install-udev
 
 # 7. Find which EP0 vendor requests are implemented (read-only, safe)
 ./hd60s-probe --sweep --seconds 0
+
+# 8. Register access + the MCU handshake (the interesting part)
+./hd60s-reg                  # scan registers, reads only
+./hd60s-reg --handshake      # run the handshake, then rescan
+./hd60s-reg --reg 0x39       # read one register
 ```
+
+### The register protocol
+
+Recovered from the vendor driver, verified on hardware:
+
+| Op | bmRequestType | bRequest | wValue | Data |
+|---|---|---|---|---|
+| read | `0xC0` | `0xC1` | `reg` | 1 byte IN |
+| write | `0x40` | `0xC1` | `(value << 8) \| reg` | none |
+
+The write puts its value in the **high byte of `wValue`** with no data stage,
+which is why blind sweeps never found it. Before the handshake only register
+`0x34` responds at all.
 
 ## USB 3.0 is required
 

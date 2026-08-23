@@ -3,16 +3,18 @@
 Userspace-first Linux support for the **original** Elgato Game Capture HD60 S
 (`0fd9:005e`). Not affiliated with or supported by Elgato.
 
-> **Status: protocol recovered, capture not yet implemented.**
+> **Status: working. 1920x1080 YUY2 at ~58 fps into OBS.**
 >
-> The register protocol and the MCU-presence handshake have been recovered from
-> Elgato's own Windows driver (which ships with debug symbols) and **verified on
-> real hardware** — see [docs/PROTOCOL.md](docs/PROTOCOL.md) §5.9 and
-> [docs/VENDOR-DRIVER.md](docs/VENDOR-DRIVER.md).
+> The protocol was recovered from Elgato's Windows driver (which ships with
+> debug symbols), the macOS `libUB530.dylib`, and the device's own MCU firmware,
+> then verified on real hardware. Every fact in the docs is tagged by how it is
+> known; nothing is invented.
 >
-> What works: register read/write, the handshake, and the whole output pipeline.
-> What does not: starting a video stream. Every fact is tagged by how it is
-> known; nothing here is invented.
+> **Requires a SuperSpeed (USB 3.x) link.** The device's USB 2.0 personality has
+> no bulk endpoint at all, so a USB 2 cable or port physically cannot carry
+> video. `tools/hd60s-linkcheck.py` will tell you which you have.
+>
+> Video only — audio is not implemented yet.
 
 The HD60 S+ is different hardware and is **not** covered.
 
@@ -21,6 +23,20 @@ The HD60 S+ is different hardware and is **not** covered.
 The device reports `bDeviceClass = 255` (vendor specific) on every interface.
 It is not UVC, so no in-tree kernel driver can bind it and it will never just
 show up as a webcam.
+
+## Watch it in OBS
+
+```bash
+sudo apt install libusb-1.0-0-dev v4l2loopback-dkms v4l-utils
+make
+./scripts/obs-start.sh
+```
+
+Then in OBS: **Sources → + → Video Capture Device (V4L2) → /dev/video2**.
+If OBS was already open, restart it so it rescans.
+
+If there is no signal you get a status card naming what the receiver sees,
+rather than a black screen.
 
 ## Quick start
 

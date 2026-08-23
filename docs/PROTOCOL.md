@@ -1713,3 +1713,86 @@ machine is not being clocked or triggered.
 
 Since the FX3's own code is unreadable (8.1) and the CPLD is only a GPIO latch
 (7.6), the remaining sources of truth are the MCU firmware and `libUB530.dylib`.
+
+## 9. Starting the stream [OBSERVED]
+
+The full sequence, verified end to end on hardware. Implemented by
+`scripts/stream.hd60s`.
+
+### 9.1 What was actually missing
+
+Two things, and both had been sitting in plain sight:
+
+1. **`bRequest 0xC6` with an empty payload is the DISARM form.** The bring-up
+   script had been ending with `vendor_out 0xC6 0x0000 0x0100` — wLength 0 —
+   which explicitly stops the register scanner. The arm form carries a list of
+   4-byte scan descriptors. Sending the real list makes the interrupt endpoint
+   `0x81` produce its first ever packet.
+2. **`p0 0xB0` bit 0 is the receiver's video output enable.** Every init table
+   in both the MCU firmware and the Windows driver leaves it clear (`0x24`).
+   It is set only once a video format has been recognised. For a progressive HD
+   format the value is `0x25` (colour-space mode 2 in bits 5:4, enable in bit 0).
+
+Writing `p0 0xB0 = 0x25` starts the pixels immediately.
+
+### 9.2 The arm command
+
+```
+bmRequestType 0x40, bRequest 0xC6, wValue 0x0064, wIndex 0x0101, wLength 40
+```
+
+Payload is ten 4-byte records `{reg, tag|page, mask, slave}`; `tag = b1 >> 6`,
+where tag 2 = MST3367 (page = `b1 & 0x3f`) and tag 1 = raw I2C to `slave`.
+
+```
+55 80 3C 00   6A 80 0F 00   6B 80 FE 00   01 81 07 00   0B 82 DF 00
+0C 82 3F 00   0E 82 08 00   48 82 60 00   9B 82 F0 00   0E 40 80 9A
+```
+
+The disarm form is the same request with `wValue 0x0000, wIndex 0x0100` and no
+payload. The vendor brackets every host-side register access with
+disarm/arm, so the scanner and direct I2C access are mutually exclusive.
+
+### 9.3 The output block for 1080p60
+
+Applied after the receiver reports lock (`p0 0x55 & 0x3C == 0x3C`):
+
+| register | value | meaning |
+|---|---|---|
+| `p1 0x24` | `0x40` | EDID-SRAM control (**not** stream enable; `0x41` = EDID disabled) |
+| `p0 0xAB` | `&= 0x7F` | clear the CSC-RAM write gate |
+| `p0 0xAD` | `0x05` | |
+| `p0 0xB1` | `0xC0` | |
+| `p0 0xB2` | `0x00` | |
+| `p0 0xB3` | `0x00` | video unmute |
+| `p0 0xB4` | `0x54` | |
+| `p0 0xB5` | `0x0C` | |
+| `p0 0xAE` | `\|= 0x04` | |
+| `p2 0x07` | `0xF4` then `0x04` | front-end reset pulse the vendor always issues |
+| **`p0 0xB0`** | **`0x25`** | **video output enable — this is what starts the data** |
+
+### 9.4 The wire format [OBSERVED]
+
+The device sends whole frames, blanking included, as a flat byte stream:
+
+```
+line  = 3840 bytes YUY2 (1920 px) + 4-byte marker  FF 00 00 KK
+KK    = 0x80  active line
+      = 0xAB  blanking line
+frame = 1080 active + 45 blanking = 1125 lines x 3844 = 4 324 500 bytes
+```
+
+The 1125 is exactly the V total the receiver reports, and the 45 blanking lines
+are `Y = 0x10` throughout. Because every line is self-labelling, a receiver can
+resync from anywhere in the stream — `src/framer.c` does exactly that, then
+strips the marker, drops blanking, and emits 1920x1080 YUY2.
+
+Measured: ~233 MB/s, 331 frames in 6 s, one resync at startup.
+
+### 9.5 Throughput matters
+
+1080p60 at this frame size is ~259 MB/s. With 8 URBs of 128 KB the daemon only
+sustained 73 MB/s, dropped most of the stream, and — because the drops broke
+continuity — the frame period could not be measured at all. 32 URBs of 256 KB
+fixed it. If frame periodicity ever looks absent again, suspect the queue depth
+before suspecting the device.

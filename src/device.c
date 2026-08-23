@@ -570,7 +570,8 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 
 	while (fgets(line, sizeof(line), f)) {
 		char *tok[80], *p, *save = NULL;   /* a 0xC6 arm list is 44 tokens */
-		int n = 0;
+		char shown[128];
+		int n = 0, errs_before = errors, may_fail = 0;
 		long a[4];
 
 		lineno++;
@@ -583,6 +584,21 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 			tok[n++] = p;
 		if (!n)
 			continue;
+
+		/* a leading '-' means "this one is allowed to fail", the way
+		 * make treats it. Some vendor commands legitimately stall
+		 * depending on device state. */
+		if (tok[0][0] == '-' && tok[0][1]) {
+			may_fail = 1;
+			tok[0]++;
+		}
+
+		/* strtok_r has chopped the line up, so keep a readable copy to
+		 * name in the error report -- a silent failure here has cost
+		 * this project several wrong conclusions */
+		snprintf(shown, sizeof(shown), "%s%s%s%s%s", tok[0],
+			 n > 1 ? " " : "", n > 1 ? tok[1] : "",
+			 n > 2 ? " " : "", n > 2 ? tok[2] : "");
 
 		/* every operand must parse before we touch the device */
 		{
@@ -765,6 +781,8 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				hd60s_mst_raw_write(d, (uint8_t)a[0], nv);
 				log_info("  raw rmw r%02lx: %02x -> %02x", a[0], v, nv);
 			} else {
+				log_err("%s:%d: mst_rawrmw r%02lx read failed",
+					path, lineno, a[0]);
 				errors++;
 			}
 		} else if (!strcmp(tok[0], "cpld_write") && n == 3) {
@@ -795,6 +813,8 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				hd60s_cpld_read(d, (uint8_t)a[0], &back);
 				log_info("  cpld rmw 0x%02lx: %02x -> %02x", a[0], v, back);
 			} else {
+				log_err("%s:%d: cpld_rmw 0x%02lx read failed",
+					path, lineno, a[0]);
 				errors++;
 			}
 		} else if (!strcmp(tok[0], "mst_rmw") && n == 5) {
@@ -835,6 +855,16 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 			log_err("%s:%d: unknown op '%s' with %d arg(s)", path,
 				lineno, tok[0], n - 1);
 			errors++;
+		}
+
+		if (errors != errs_before) {
+			if (may_fail) {
+				errors = errs_before;
+				log_info("  (line %d may fail, ignoring: %s)",
+					 lineno, shown);
+			} else {
+				log_err("%s:%d failed: %s", path, lineno, shown);
+			}
 		}
 	}
 	fclose(f);

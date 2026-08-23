@@ -71,12 +71,35 @@ static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		return 1;
 	}
 
+	/* HPD gates the DDC path: assert it so the source sees a sink. */
+	hd60s_set_hpd(&dev, 1);
+	{
+		uint8_t edid[128];
+
+		if (hd60s_read_edid(&dev, edid, sizeof(edid)) == 0 &&
+		    edid[0] == 0x00 && edid[1] == 0xff) {
+			unsigned sum = 0;
+			int i;
+
+			for (i = 0; i < 128; i++)
+				sum += edid[i];
+			log_info("EDID present: %c%c%c product 0x%04x, checksum %s",
+				 '@' + ((edid[8] >> 2) & 0x1f),
+				 '@' + (((edid[8] & 3) << 3) | (edid[9] >> 5)),
+				 '@' + (edid[9] & 0x1f),
+				 edid[10] | (edid[11] << 8),
+				 (sum & 0xff) == 0 ? "ok" : "BAD");
+		} else {
+			log_warn("no valid EDID readable -- the source may refuse to output");
+		}
+	}
+
 	if (g_script && hd60s_run_script(&dev, g_script) < 0)
 		log_warn("bring-up script reported errors; continuing anyway");
 
 	/* Report what the receiver thinks, using the vendor driver's own test:
 	 * MST3367_HDMI_MODE_DETECT checks (page-reg 0x55 & 0x3c) == 0x3c. */
-	if (hd60s_mst_read(&dev, 0x01, 0x55, &v) == 0)
+	if (hd60s_mst_read(&dev, 0x00, 0x55, &v) == 0)
 		log_info("MST3367 reg 0x55 = 0x%02x -> HDMI mode %s", v,
 			 (v & 0x3c) == 0x3c ? "DETECTED" : "not detected");
 

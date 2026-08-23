@@ -926,7 +926,86 @@ connected (page `0x01`: `0x28`/`0x29` go `06 00` -> `ce 07`, and `0x0e`/`0x0f`,
 [UNKNOWN] Signal detection therefore depends on completing the receiver init,
 which depends on resolving the branch conditions above.
 
-### 5.13 Still unknown
+### 5.13 MST3367 addressing — a correction [OBSERVED]
+
+Slave `0x9c` is one of `i2c_access`'s **special** slaves (`0x88`, `0x98`,
+`0x9c`). Those take the slave value as the MCU command — `wValue = 0x509c` —
+with a raw payload, **not** the generic command-`0x66` form used for every
+other slave.
+
+This document previously described MST3367 access using the generic form. That
+was wrong, and wrong in the worst way: the generic form is *accepted* and
+returns plausible-looking data, but the page select does not take, so every read
+comes from whatever window happened to be active.
+
+Proof — regs `0x14`–`0x1b` after each page-select attempt:
+
+| Page select | `14 15 16 17 18 19 1a 1b` |
+|---|---|
+| none | `00 00 00 c0 c0 ff ff ff` |
+| `wValue 0x509c` payload `{00,00}` | `00 00 00 00 00 00 00 00` |
+| `wValue 0x509c` payload `{00,01}` | `00 00 30 00 00 00 50 02` |
+| `wValue 0x509c` payload `{00,02}` | `00 00 00 c0 c0 ff ff ff` |
+| generic `cmd 0x66` `{9c,02,00,NN}` | unchanged for every NN |
+
+Page 1's `0x16 = 0x30` and `0x1a = 0x50` are exactly what the extracted init
+writes to those registers, which corroborates the window.
+
+Correct forms:
+
+```
+page select : wValue 0x509c, payload { 0x00, page }
+register write: wValue 0x509c, payload { reg, val }
+register read : wValue 0x5066, payload { 0x9d, 0x01, reg }  then read 1 byte
+```
+
+Everything read from the MST3367 before this fix should be treated as
+unreliable.
+
+### 5.14 Hot-plug detect and EDID [OBSERVED — CONFIRMED ON HARDWARE]
+
+HPD toward the source is **page 0 register `0xB7` bit 1**, from
+`MST3367_TMDS_HOT_PLUG` (VMA `0x18ab0`), which routes `0fd9:005e` straight to a
+read-modify-write of that bit.
+
+With correct addressing the bit sets and holds (`0x00` -> `0x02`). With the old
+broken addressing it silently refused — a good example of why the correction
+above mattered.
+
+**Asserting HPD gates the DDC path.** Before HPD, an I2C scan finds seven
+devices and nothing at `0xa0`. After HPD, slave `0xa0` — the standard DDC/EDID
+address — appears, and reads back a valid 128-byte EDID:
+
+```
+00: 00 ff ff ff ff ff ff 00 14 e1 01 00 00 00 00 00
+10: 11 17 01 03 80 00 02 78 1a cf 74 a3 57 4c b0 23
+...
+50: 58 2c 25 00 c4 8e 21 00 00 9e 00 00 00 fc 00 48
+60: 44 36 30 20 53 0a 20 20 20 20 20 20 0a 00 00 fd
+```
+
+| Field | Value |
+|---|---|
+| header | `00 FF FF FF FF FF FF 00` — valid |
+| checksum | correct |
+| manufacturer | `EGA` (Elgato) |
+| product | `0x0001` |
+| monitor name | **`HD60 S`** |
+| extensions | 1 |
+
+So the device holds its own EDID and serves it over DDC once HPD is asserted; a
+Linux driver does not need to supply one. This also confirms the earlier trace
+finding that `CY3014_SetStartTechEDID` is dead code here — it is gated on YUAN
+VID `0x1164` and never runs for `0fd9:005e`.
+
+`hd60sd --source device` now asserts HPD and validates the EDID on start.
+
+[UNKNOWN] Even with HPD asserted and a valid EDID served, the source is still
+not transmitting — mode-detect register `0x55` reads `0x03` (the driver's test
+wants `(v & 0x3c) == 0x3c`) and H-total reads 0. So something beyond
+sink-presentation is still required.
+
+### 5.15 Still unknown
 
 - `bRequest` / `wValue` / `wIndex` values for any operation
 - the MCU-presence handshake reportedly required before register access works

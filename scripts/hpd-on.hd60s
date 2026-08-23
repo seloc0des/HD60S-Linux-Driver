@@ -1,0 +1,20 @@
+# Assert hot-plug detect toward the HDMI source.
+# MST3367_TMDS_HOT_PLUG (VMA 0x18ab0) routes 0fd9:005e straight to a
+# read-modify-write of page 0x00 register 0xB7 bit 1 -- that bit is HPD.
+mst_read  0x00 0xb7
+mst_write 0x00 0xb7 0x02      # set bit 1
+delay 500
+mst_read  0x00 0xb7
+
+# give the source time to notice the sink and start transmitting
+delay 2000
+
+mst_read 0x00 0x55            # (v & 0x3c) == 0x3c means a mode is detected
+mst_read 0x00 0x57
+mst_read 0x00 0x58
+mst_read 0x00 0x59
+mst_read 0x00 0x5a
+mst_read 0x00 0x5b
+mst_read 0x00 0x5c
+mst_read 0x02 0x28
+mst_read 0x02 0x29

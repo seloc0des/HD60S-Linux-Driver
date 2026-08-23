@@ -78,19 +78,71 @@ int hd60s_i2c_write(struct hd60s_dev *d, uint8_t slave, uint8_t reg, uint8_t val
 	return rc;
 }
 
-/* MST3367 banks its registers; slave 0x9c register 0x00 selects the page. */
+/* MST3367 access.
+ *
+ * IMPORTANT: 0x9c is one of i2c_access's *special* slaves (0x88/0x98/0x9c).
+ * Those are addressed with the slave value as the MCU command -- wValue
+ * 0x509c -- and a raw payload, NOT the generic command-0x66 form used for
+ * every other slave. Getting this wrong is silent: the generic form is
+ * accepted and returns plausible-looking data, but page selection does not
+ * take, so every read comes from whatever window happened to be selected.
+ *
+ * Verified: writing {0x00, page} via wValue 0x509c produces genuinely
+ * different register windows, while the generic form does not change them.
+ */
 int hd60s_mst_write(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t val)
 {
-	if (hd60s_i2c_write(d, HD60S_SLAVE_MST3367, 0x00, page) < 0)
+	uint8_t sel[2] = { 0x00, page };
+	uint8_t wr[2] = { reg, val };
+
+	if (hd60s_mcu_write(d, HD60S_SLAVE_MST3367, sel, sizeof(sel)) < 0)
 		return -1;
-	return hd60s_i2c_write(d, HD60S_SLAVE_MST3367, reg, val);
+	usleep(8000);
+	if (hd60s_mcu_write(d, HD60S_SLAVE_MST3367, wr, sizeof(wr)) < 0)
+		return -1;
+	usleep(8000);
+	return 0;
 }
 
+/* Reads still use the generic form -- it is what returns correct data, and the
+ * page state selected above persists in the chip. */
 int hd60s_mst_read(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t *out)
 {
-	if (hd60s_i2c_write(d, HD60S_SLAVE_MST3367, 0x00, page) < 0)
+	uint8_t sel[2] = { 0x00, page };
+
+	if (hd60s_mcu_write(d, HD60S_SLAVE_MST3367, sel, sizeof(sel)) < 0)
 		return -1;
+	usleep(8000);
 	return hd60s_i2c_read(d, HD60S_SLAVE_MST3367, reg, out);
+}
+
+/* Hot-plug detect toward the source: page 0 register 0xB7 bit 1.
+ * The DDC/EDID path is gated by this -- the EDID EEPROM at slave 0xa0 only
+ * appears on the bus once HPD is asserted. */
+int hd60s_set_hpd(struct hd60s_dev *d, int on)
+{
+	uint8_t v = 0;
+
+	if (hd60s_mst_read(d, 0x00, 0xb7, &v) < 0)
+		return -1;
+	v = on ? (uint8_t)(v | 0x02) : (uint8_t)(v & ~0x02);
+	if (hd60s_mst_write(d, 0x00, 0xb7, v) < 0)
+		return -1;
+	if (hd60s_mst_read(d, 0x00, 0xb7, &v) < 0)
+		return -1;
+	log_info("HPD %s (reg 0xb7 = 0x%02x)", (v & 0x02) ? "asserted" : "cleared", v);
+	return ((v & 0x02) != 0) == (on != 0) ? 0 : -1;
+}
+
+/* Read the EDID the device presents to the source. Requires HPD asserted. */
+int hd60s_read_edid(struct hd60s_dev *d, uint8_t *buf, int len)
+{
+	int i;
+
+	for (i = 0; i < len; i++)
+		if (hd60s_i2c_read(d, 0xa0, (uint8_t)i, &buf[i]) < 0)
+			return -1;
+	return 0;
 }
 
 /* CheckIsMCUExist(), VMA 0x19f80. Prerequisite for everything else: the

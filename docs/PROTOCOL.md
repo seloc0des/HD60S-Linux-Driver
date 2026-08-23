@@ -1647,3 +1647,69 @@ Socket layout confirmed against the observed data (sockets are `0x80` apart):
 | `0x20` | `DSCR_BUFFER` |
 | `0x24` | `DSCR_SYNC` |
 | `0x28` | `DSCR_CHAIN` |
+
+## 8. The FX3 side is complete and correct [OBSERVED]
+
+### 8.1 The firmware's code is unreadable, its data is not
+
+Dumping all 512 KB of SYSMEM via `0xA0` gives one contiguous refusal:
+
+| range | size | result |
+|---|---|---|
+| `0x40000000`-`0x40002F40` | 12 KB | reads fine — DMA descriptors |
+| `0x40003000`-`0x40023000` | **128 KB** | every read STALLs |
+| `0x4002301C`-`0x40080000` | 372 KB | reads fine — heap and buffers |
+
+The boundaries are sharp and repeatable (`0x40002F00` readable, `0x40003000`
+stalls, `0x40023100` readable again). There is **no ARM code anywhere in the
+readable regions** — zero `stmfd sp!` prologues, zero `bx lr`. So the firmware
+image sits in that 128 KB hole and the `0xA0` handler will not read it out.
+
+The readable part does carry the string
+`Copyright (c) 1996-2008 Express Logic Inc. * ThreadX ARM9/RVDS Version`,
+confirming this is a stock Cypress FX3 SDK firmware on ThreadX.
+
+**Consequence:** the FX3's firmware cannot be disassembled from the device. The
+MCU firmware shipped in the vendor package is the only decodable firmware we have.
+
+> Note: `hd60s-dumpram` pads unmapped chunks with `0xFF`, not `0x00`. A dump is
+> not all-real data — check for `0xFF` runs before drawing conclusions from it.
+
+### 8.2 The video DMA channel is built exactly as it should be [OBSERVED]
+
+`0x40000000` holds the FX3's DMA descriptor array, 16 bytes per entry
+(`buffer`, `sync`, `chain`, `size`), 755 live descriptors. Two classes matter:
+
+| sync | count | buffer size | meaning |
+|---|---|---|---|
+| `0xc100c303` | 6 | 16384 | PIB (GPIF) socket 0 → UIB socket 3 |
+| `0xc101c303` | 6 | 16384 | PIB (GPIF) socket 1 → UIB socket 3 |
+
+Decoding `sync` as consumer in the low half, producer in the high half:
+`cons_sck = sync & 0xFF`, `cons_ip = (sync >> 8) & 0x3F`,
+`prod_sck = (sync >> 16) & 0xFF`, `prod_ip = (sync >> 24) & 0x3F`, with
+IP block IDs `0` LPP, `1` PIB, `2` SIB, `3` UIB, `4` UIBIN, `0x3F` CPU.
+
+That gives **producer = PIB (GPIF) sockets 0 and 1, consumer = UIB socket 3 =
+endpoint `0x83` IN**, with twelve 16 KB buffers — two producer sockets
+ping-ponging into one USB IN endpoint. That is textbook FX3 video capture.
+
+It also matches the live register diff of 7.2 exactly: the sockets that were
+handed valid descriptors on `SET_INTERFACE` are PIB 0, PIB 1 and UIB 3 — the
+same three this table describes.
+
+### 8.3 Conclusion: the fault is on the GPIF's input pins
+
+Everything downstream of the GPIF is confirmed good:
+
+- the DMA channel is constructed correctly for 1080p capture
+- both producer sockets and the consumer socket are armed on `SET_INTERFACE`
+- the USB endpoint is healthy (it NAKs on bulk, sends empty iso packets)
+- the receiver is locked with correct timings
+
+Nothing is left between them except the parallel video bus from the MST3367 into
+the FX3's GPIF-II pins. Either the receiver is not driving it, or the GPIF state
+machine is not being clocked or triggered.
+
+Since the FX3's own code is unreadable (8.1) and the CPLD is only a GPIO latch
+(7.6), the remaining sources of truth are the MCU firmware and `libUB530.dylib`.

@@ -343,6 +343,7 @@ void hd60s_close(struct hd60s_dev *d)
  *   mst_write  PAGE REG VAL     MST3367 receiver, page-selected
  *   mst_read   PAGE REG
  *   delay      MS
+ *   vendor_out REQ WVAL WIDX [bytes...]   raw vendor OUT on EP0
  *   cpld_write REG VAL          Altera MAX II CPLD (I2C slave 0x98)
  *   cpld_read  REG
  *   cpld_rmw   REG AND OR
@@ -367,7 +368,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 {
 	char line[256];
 	FILE *f = fopen(path, "r");
-	int lineno = 0, errors = 0;
+	int lineno = 0, errors = 0, rc;
 
 	if (!f) {
 		log_err("cannot open %s: %s", path, strerror(errno));
@@ -464,6 +465,33 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 " after %d", a[0], a[1], v,
 				 got ? "MATCH" : "TIMEOUT", i);
 			if (!got)
+				errors++;
+		} else if (!strcmp(tok[0], "vendor_out") && n >= 4) {
+			/* vendor_out REQ WVALUE WINDEX [byte...] */
+			uint8_t data[32];
+			int nd = 0, k;
+
+			for (k = 4; k < n && nd < (int)sizeof(data); k++) {
+				long b;
+
+				if (parse_num(tok[k], &b) < 0) {
+					log_err("%s:%d: bad payload byte", path, lineno);
+					break;
+				}
+				data[nd++] = (uint8_t)b;
+			}
+			rc = libusb_control_transfer(d->h,
+						     LIBUSB_REQUEST_TYPE_VENDOR |
+							     LIBUSB_ENDPOINT_OUT |
+							     LIBUSB_RECIPIENT_DEVICE,
+						     (uint8_t)a[0], (uint16_t)a[1],
+						     (uint16_t)a[2],
+						     nd ? data : NULL,
+						     (uint16_t)nd, 1000);
+			log_info("  vendor 0x%02lx wVal=0x%04lx wIdx=0x%04lx len=%d -> %s",
+				 a[0], a[1], a[2], nd,
+				 rc >= 0 ? "ok" : libusb_error_name(rc));
+			if (rc < 0)
 				errors++;
 		} else if (!strcmp(tok[0], "cpld_write") && n == 3) {
 			if (hd60s_cpld_write(d, (uint8_t)a[0], (uint8_t)a[1]) < 0) {

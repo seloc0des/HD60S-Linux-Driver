@@ -377,7 +377,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 	log_info("running bring-up script %s", path);
 
 	while (fgets(line, sizeof(line), f)) {
-		char *tok[6], *p, *save = NULL;
+		char *tok[24], *p, *save = NULL;
 		int n = 0;
 		long a[4];
 
@@ -385,7 +385,8 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 		p = strchr(line, '#');
 		if (p)
 			*p = '\0';
-		for (p = strtok_r(line, " \t\r\n", &save); p && n < 6;
+		for (p = strtok_r(line, " \t\r\n", &save);
+		     p && n < (int)(sizeof(tok) / sizeof(tok[0]));
 		     p = strtok_r(NULL, " \t\r\n", &save))
 			tok[n++] = p;
 		if (!n)
@@ -488,6 +489,9 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 						     (uint16_t)a[2],
 						     nd ? data : NULL,
 						     (uint16_t)nd, 1000);
+			if (nd != n - 4)
+				log_warn("  vendor 0x%02lx: parsed %d of %d payload byte(s)",
+					 a[0], nd, n - 4);
 			log_info("  vendor 0x%02lx wVal=0x%04lx wIdx=0x%04lx len=%d -> %s",
 				 a[0], a[1], a[2], nd,
 				 rc >= 0 ? "ok" : libusb_error_name(rc));

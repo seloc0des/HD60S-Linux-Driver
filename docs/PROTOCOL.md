@@ -306,15 +306,41 @@ The OUT direction (`bmRequestType 0x40`) is live. Verified twice:
 So the device really does poke RAM, not merely ACK the transfer. The device
 stayed healthy afterwards.
 
-[UNKNOWN] Whether writes obey the same `addr + len <= 0xFF` bound as reads. That
-needs a blind write past the read window, since there is no way to read back and
-confirm. It matters: if writes reach further than reads, the FX3 download
-protocol (write a flash reader into RAM, then jump to it) may be usable to dump
-the real firmware. If writes share the 255-byte bound, that route is closed.
+**Writes obey the same bound as reads** [OBSERVED]. A blind write at `0x100`,
+just past the read window, **stalls**:
+
+| Write target | Result |
+|---|---|
+| `0xfb` (idempotent) | accepted |
+| `0xfc` (value `0x5a`) | accepted, read-back changed |
+| `0x100` (value `0x5a`) | **stall** |
+
+So `0xA0` here is a bounded 256-byte peek/poke window, **not** the Cypress FX3
+boot loader. Elgato reimplemented the command with a hard bounds check rather
+than leaving the stock handler in place.
+
+**This closes the RAM-download route.** There is no way to place a flash reader
+into memory and jump to it, so the firmware cannot be dumped over USB.
 
 Note the FX3 boot protocol treats a **zero-length** `0xA0` as "jump to the
 address in wValue/wIndex". `hd60s-writetest` refuses zero-length writes so this
 cannot happen by accident.
+
+### 5.2b No Microsoft OS descriptors [OBSERVED]
+
+Devices shipping Windows drivers often expose a Microsoft OS String Descriptor
+at string index `0xEE`, which *names a vendor request code*. That would have
+handed us a vendor `bRequest` without any blind probing. The HD60 S does not
+have one — index `0xEE` stalls.
+
+The device exposes only three strings (`Elgato Systems`, `Game Capture HD60 S`,
+and the serial), so there is nothing to learn there either.
+
+`DEVICE_QUALIFIER` and `OTHER_SPEED_CONFIG` are present and describe the
+full-speed personality: a single interface with the same iso EP 0x83 at
+0 / 64 / 128 bytes per frame, and no equivalent of interface 1. Nothing useful
+for capture, but it confirms the device's descriptor set is complete and
+conventional — the vendor protocol is not hidden in a nonstandard descriptor.
 
 #### Where the firmware could still come from
 

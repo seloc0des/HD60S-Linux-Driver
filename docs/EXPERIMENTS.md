@@ -75,6 +75,29 @@ Result: byte-granular reads work but the handler caps transfers at
 `docs/captures/window-252.bin`. Not enough for a firmware dump; see
 `docs/PROTOCOL.md` 5.1.
 
+## E6 — Standard descriptor space (DONE)
+
+```bash
+./hd60s-osdesc
+```
+
+Result: nothing. No Microsoft OS descriptor at string index `0xEE` (which would
+have named a vendor request code), only three ordinary strings, and a
+conventional `DEVICE_QUALIFIER` / `OTHER_SPEED_CONFIG` pair. The vendor protocol
+is not reachable through the standard descriptor space.
+
+## E7 — Does `0xA0` accept writes past the read window? (DONE)
+
+```bash
+./hd60s-writetest                                    # idempotent, safe
+./hd60s-writetest --addr 0x100 --value 0x5a --force  # past the bound
+```
+
+Result: writes are accepted **within** the 255-byte window and **stall** outside
+it. Same bound as reads. `0xA0` is a bounded peek/poke window, not the FX3 boot
+loader, so a flash reader cannot be loaded and run. **This closes the on-device
+firmware dump route.**
+
 ## E5 — Full command set (blocked)
 
 The vendor command set cannot be derived by probing alone -- E4b established

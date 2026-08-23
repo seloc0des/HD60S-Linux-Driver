@@ -28,6 +28,7 @@ struct hd60s_dev {
 };
 
 int hd60s_open(struct hd60s_dev *d);
+int hd60s_open_quiet(struct hd60s_dev *d, int quiet);
 void hd60s_close(struct hd60s_dev *d);
 
 int hd60s_fpga_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out);

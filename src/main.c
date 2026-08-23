@@ -105,21 +105,27 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 	struct hd60s_dev dev;
 	struct hd60s_frame f;
 	char l1[48], l2[48], l3[48];
-	int state = 0, rc = 0;
+	int state = 0, rc = 0, have_dev;
 	uint64_t period, next;
 	time_t t0, last_poll = 0;
 
-	if (hd60s_open(&dev) < 0)
-		return 1;
-	if (hd60s_handshake(&dev) < 0) {
-		log_err("MCU handshake failed -- cannot reach the receiver");
-		hd60s_close(&dev);
-		return 1;
+	/* The device may be absent -- unplugged, or being swapped while chasing a
+	 * cable. Do not bail: OBS wants a source, and that is exactly when the
+	 * status frame earns its keep. Retry the open on each tick instead. */
+	have_dev = hd60s_open(&dev) == 0;
+	if (have_dev) {
+		if (hd60s_handshake(&dev) < 0) {
+			log_warn("MCU handshake failed; will retry");
+			hd60s_close(&dev);
+			have_dev = 0;
+		} else {
+			hd60s_set_hpd(&dev, 1);
+			if (g_script && hd60s_run_script(&dev, g_script) < 0)
+				log_warn("bring-up script reported errors; continuing");
+		}
+	} else {
+		log_warn("device not present -- feeding status frames, will retry");
 	}
-	hd60s_set_hpd(&dev, 1);
-
-	if (g_script && hd60s_run_script(&dev, g_script) < 0)
-		log_warn("bring-up script reported errors; continuing");
 
 	memset(&f, 0, sizeof(f));
 	f.width = w; f.height = h; f.fourcc = HD60S_FOURCC_YUY2;
@@ -136,15 +142,17 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 	if (!g_sink || g_sink->open(g_sink, w, h, f.fourcc) < 0) {
 		if (g_sink) g_sink->close(g_sink);
 		free(f.data); free(g_accum);
-		hd60s_close(&dev);
+		if (have_dev) hd60s_close(&dev);
 		return 1;
 	}
 
-	dev.on_data = on_iso_data;
-	if (hd60s_stream_start(&dev, alt) < 0)
-		log_warn("iso streaming did not start; emitting status only");
-	if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
-		log_warn("post-stream script reported errors");
+	if (have_dev) {
+		dev.on_data = on_iso_data;
+		if (hd60s_stream_start(&dev, alt) < 0)
+			log_warn("iso streaming did not start; status only");
+		if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
+			log_warn("post-stream script reported errors");
+	}
 
 	log_info("feeding %s at %ux%u %ufps -- ctrl-c to stop", sinkspec, w, h, fps);
 	period = 1000000000ull / (fps ? fps : 60);
@@ -154,11 +162,37 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 	while (!stop && (seconds <= 0 || time(NULL) - t0 < seconds)) {
 		uint64_t t;
 
-		hd60s_pump(&dev, 5);
+		if (have_dev)
+			hd60s_pump(&dev, 5);
+		else
+			usleep(5000);
 
 		if (time(NULL) != last_poll) {
 			last_poll = time(NULL);
-			receiver_status(&dev, &state, l1, l2, l3, sizeof(l1));
+			if (have_dev) {
+				receiver_status(&dev, &state, l1, l2, l3, sizeof(l1));
+			} else {
+				/* try to pick the device up again */
+				if (hd60s_open_quiet(&dev, 1) == 0 &&
+				    hd60s_handshake(&dev) == 0) {
+					log_info("device appeared -- bringing it up");
+					hd60s_set_hpd(&dev, 1);
+					if (g_script)
+						hd60s_run_script(&dev, g_script);
+					dev.on_data = on_iso_data;
+					hd60s_stream_start(&dev, alt);
+					if (g_post_script)
+						hd60s_run_script(&dev, g_post_script);
+					have_dev = 1;
+				} else {
+					if (dev.h)
+						hd60s_close(&dev);
+					state = 0;
+					snprintf(l1, sizeof(l1), "NO DEVICE");
+					snprintf(l2, sizeof(l2), "HD60 S NOT CONNECTED");
+					snprintf(l3, sizeof(l3), "WAITING - PLUG IT IN");
+				}
+			}
 		}
 
 		if (g_frame_ready) {
@@ -183,12 +217,14 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			next = t;
 	}
 
-	hd60s_stream_stop(&dev);
-	log_info("iso packets %llu, with data %llu, bytes %llu",
-		 dev.pkts, dev.nonempty, dev.bytes);
+	if (have_dev) {
+		hd60s_stream_stop(&dev);
+		log_info("iso packets %llu, with data %llu, bytes %llu",
+			 dev.pkts, dev.nonempty, dev.bytes);
+		hd60s_close(&dev);
+	}
 	g_sink->close(g_sink);
 	free(f.data); free(g_accum);
-	hd60s_close(&dev);
 	return rc;
 }
 

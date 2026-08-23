@@ -329,26 +329,39 @@ int hd60s_pump(struct hd60s_dev *d, int ms)
 
 /* --- open / close ------------------------------------------------------ */
 
-int hd60s_open(struct hd60s_dev *d)
+/* quiet: suppress the not-found diagnostics. Used by the retry path, which
+ * polls once a second and would otherwise fill the terminal. */
+int hd60s_open_quiet(struct hd60s_dev *d, int quiet)
 {
 	memset(d, 0, sizeof(*d));
 	if (libusb_init(&d->ctx) != 0) {
-		log_err("libusb_init failed");
+		if (!quiet)
+			log_err("libusb_init failed");
 		return -1;
 	}
 	d->h = libusb_open_device_with_vid_pid(d->ctx, HD60S_VID, HD60S_PID);
 	if (!d->h) {
-		log_err("no %04x:%04x, or permission denied", HD60S_VID, HD60S_PID);
-		log_err("install udev/99-elgato-hd60s.rules and replug");
+		if (!quiet) {
+			log_err("no %04x:%04x, or permission denied",
+				HD60S_VID, HD60S_PID);
+			log_err("install udev/99-elgato-hd60s.rules and replug");
+		}
 		libusb_exit(d->ctx);
+		d->ctx = NULL;
 		return -1;
 	}
 	libusb_set_auto_detach_kernel_driver(d->h, 1);
 
-	if (libusb_get_device_speed(libusb_get_device(d->h)) < LIBUSB_SPEED_SUPER)
+	if (!quiet &&
+	    libusb_get_device_speed(libusb_get_device(d->h)) < LIBUSB_SPEED_SUPER)
 		log_warn("link is not SuperSpeed -- the device declares full "
 			 "functionality requires it");
 	return 0;
+}
+
+int hd60s_open(struct hd60s_dev *d)
+{
+	return hd60s_open_quiet(d, 0);
 }
 
 void hd60s_close(struct hd60s_dev *d)

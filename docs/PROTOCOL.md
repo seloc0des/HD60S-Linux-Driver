@@ -562,26 +562,24 @@ gate every earlier probe ran into (5.8), and it is now open.
 
 `./hd60s-reg --handshake` performs it and rescans.
 
-**Caveat, and it matters.** In `CY3014_HwInitialize` (VMA `0x6fb10`) the call to
-`CheckIsMCUExist` is guarded:
+**This is the vendor's intended path for our device.** An earlier revision of
+this document claimed the handshake was gated on PID `0x0076` only. That was
+wrong — it came from reading the *first* of two call sites.
+
+`CY3014_HwInitialize` calls `CheckIsMCUExist` twice. The second call (VMA
+`0x6fde2`) is reached through a switch on `(idProduct & 0xfff)`:
 
 ```
-cmp WORD PTR [rax+0x8], 0xfd9     ; idVendor
-jne skip
-cmp WORD PTR [rax+0xa], 0x76      ; idProduct == 0x0076 (Rev. 4)
-jne skip
-call CheckIsMCUExist
+cmp ecx,0x532  je  hs
+cmp ecx,0x4f   je  hs
+cmp ecx,0x5e   je  hs        <- this device
+cmp ecx,0x74   je  hs
+...
+hs: call CheckIsMCUExist
 ```
 
-So the vendor driver runs this handshake **only for PID `0x0076`**, not for our
-`0x005e`. We ran it anyway and it had a real effect — the writes were accepted,
-`0x39` began responding, and `0x34` changed `0x00` to `0x01`.
-
-Two readings are possible and we cannot yet distinguish them: the sequence is
-generic to the register block and Rev. 2 simply does not need it during the
-vendor's init, or Rev. 2 reaches the same state through a different path.
-[UNKNOWN] Do not assume we have replicated the vendor init for this device — we
-have only shown that this particular sequence works on it.
+`0x5e` is explicitly in the list, so running the handshake on this device
+matches what the vendor driver does.
 
 #### Other init commands seen
 
@@ -626,6 +624,21 @@ mov   DWORD [rsp+0x28], 1   ; one byte
 mov   BYTE  [rsp+0x30], 1   ; IN
 ```
 
+#### `EnableMCU` — the same shape, one bit different [OBSERVED]
+
+`EnableMCU()` (VMA `0x1a590`) is nearly identical to the handshake:
+
+| | reg `0x39` | reg `0x34` | poll |
+|---|---|---|---|
+| `CheckIsMCUExist` | `0xC0` | `0x41` | yes, until `0x39` reads 1 |
+| `EnableMCU` | `0xC0` | `0x40` | no |
+
+Only bit 0 of control register `0x34` differs. Verified: after `EnableMCU`,
+reading `0x34` returns `0x00`; after the handshake it returns `0x01`. So the
+read reflects the low bit of what was written.
+
+`./hd60s-reg --enable-mcu` performs it.
+
 #### The I2C bridge answers, but nothing is behind it yet [OBSERVED]
 
 Reading register `0x00` from every even slave address `0x00`–`0xFE`, after the
@@ -638,12 +651,31 @@ it is not an I2C ACK. A constant reply across every address and register means
 no peripheral is actually answering — the chips are presumably unpowered or the
 I2C master is not enabled yet.
 
-[UNKNOWN] What brings them up. Candidates from the symbol table:
-`CY3014_PowerDownPeripherals` (and its inverse), `EnableMCU`, and
+Running the handshake and `EnableMCU` first does **not** wake it, and the
+readings are **not reproducible**:
+
+| Run | Result |
+|---|---|
+| scan with no preceding handshake | all 128 addresses return `0x33` |
+| scan right after handshake + `EnableMCU` | first 51 addresses return `0x01`, the rest `0x33` |
+| 1158 reads of slave `0x90` over 3 s after `EnableMCU` | `0x33` throughout, never `0x01` |
+| 9 fixed addresses read forward then backward | `0x33` every time, both orders |
+
+The `0x01` block is therefore neither address-dependent nor time-dependent — it
+is not a property of any I2C device. The most economical explanation is the
+stale-EP0-buffer behaviour already documented in 5.4: the handshake's final poll
+of register `0x39` returns `0x01` and leaves it in the buffer, and subsequent
+reads echo it until something displaces it.
+
+**Conclusion: the `0xC0` bridge is not returning I2C data at all on this device
+in this state.** Do not read anything into the byte values.
+
+[UNKNOWN] What actually brings the peripherals up. Candidates from the symbol
+table, none yet transcribed: `CY3014_PowerDownPeripherals` and its inverse, and
 `CDevice::OnSetCustomDebugMcuAccessEnableProperty`.
 
-`./hd60s-reg --i2c-scan` performs this and reports the uniform-reply case
-explicitly rather than printing 128 false positives.
+`./hd60s-reg --i2c-scan` reports the uniform-reply case explicitly rather than
+printing 128 false positives.
 
 ### 5.10 Still unknown
 

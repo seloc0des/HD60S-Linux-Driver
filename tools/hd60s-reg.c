@@ -108,42 +108,73 @@ static int i2c_read(libusb_device_handle *h, uint8_t slave, uint8_t reg,
  * than printing 128 false positives. */
 static void i2c_scan(libusb_device_handle *h)
 {
-	uint8_t seen[128];
-	int slave, ok = 0, i, uniform = 1;
+	uint8_t val[128];
+	uint8_t got[128];
+	int slave, ok = 0, i, distinct = 0, first = -1;
 
 	printf("I2C scan via bRequest 0x%02x (reads only)\n", REQ_I2C);
-	memset(seen, 0, sizeof(seen));
+	memset(val, 0, sizeof(val));
+	memset(got, 0, sizeof(got));
 
 	for (slave = 0; slave <= 0xfe; slave += 2) {
 		uint8_t v;
 
 		if (i2c_read(h, (uint8_t)slave, 0x00, &v) != 1)
 			continue;
-		seen[slave / 2] = v;
-		if (ok && v != seen[0])
-			uniform = 0;
+		val[slave / 2] = v;
+		got[slave / 2] = 1;
+		if (first < 0)
+			first = v;
+		else if (v != first)
+			distinct = 1;
 		ok++;
 	}
 
-	if (ok && uniform) {
+	if (!ok) {
+		printf("  no address accepted a transfer\n");
+		return;
+	}
+	if (!distinct) {
 		printf("  all %d address(es) returned the identical byte 0x%02x\n",
-		       ok, seen[0]);
+		       ok, first);
 		printf("  -> the bridge accepts the transfer but no I2C device is\n");
 		printf("     answering. The peripherals are not reachable yet;\n");
 		printf("     see docs/PROTOCOL.md on the 0xC0 I2C bridge.\n");
 		return;
 	}
 	for (i = 0; i < 128; i++)
-		if (seen[i])
-			printf("  slave 0x%02x -> 0x%02x\n", i * 2, seen[i]);
+		if (got[i])
+			printf("  slave 0x%02x -> 0x%02x\n", i * 2, val[i]);
 	printf("  %d address(es) accepted, values differ -- worth a closer look\n", ok);
+}
+
+/* EnableMCU() from the vendor driver (VMA 0x1a590). Same shape as the
+ * handshake but writes 0x40 to control register 0x34 instead of 0x41 -- bit 0
+ * is what separates the two. No poll afterwards. */
+static int enable_mcu(libusb_device_handle *h)
+{
+	int rc;
+
+	log_info("EnableMCU: write reg 0x39 = 0xC0");
+	rc = reg_write(h, 0x39, 0xC0);
+	if (rc != 0) {
+		log_err("  rejected: %s", libusb_error_name(rc));
+		return -1;
+	}
+	log_info("EnableMCU: write reg 0x34 = 0x40");
+	rc = reg_write(h, 0x34, 0x40);
+	if (rc != 0) {
+		log_err("  rejected: %s", libusb_error_name(rc));
+		return -1;
+	}
+	return 0;
 }
 
 int main(int argc, char **argv)
 {
 	libusb_context *ctx = NULL;
 	libusb_device_handle *h;
-	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0;
+	int i, do_write = 0, scan = 1, rc, do_hs = 0, rlen = 1, do_i2c = 0, do_en = 0;
 	long reg = -1, val = -1;
 
 	for (i = 1; i < argc; i++) {
@@ -155,6 +186,8 @@ int main(int argc, char **argv)
 			do_write = 1;
 		} else if (!strcmp(argv[i], "--len") && i + 1 < argc) {
 			rlen = atoi(argv[++i]);
+		} else if (!strcmp(argv[i], "--enable-mcu")) {
+			do_en = 1;
 		} else if (!strcmp(argv[i], "--i2c-scan")) {
 			do_i2c = 1;
 			scan = 0;
@@ -164,6 +197,7 @@ int main(int argc, char **argv)
 			fprintf(stderr,
 				"usage: %s [--handshake] [--reg R [--write V]]\n"
 				"  --handshake: run the MCU-presence handshake first\n"
+				"  --enable-mcu: run EnableMCU (reg 0x39=0xC0, reg 0x34=0x40)\n"
 				"  --i2c-scan : scan I2C slaves via bRequest 0xC0 (reads only)\n"
 				"  no args   : scan registers 0x00-0xff (reads only)\n"
 				"  --reg R   : read register R\n"
@@ -186,6 +220,8 @@ int main(int argc, char **argv)
 
 	if (do_hs)
 		handshake(h);
+	if (do_en)
+		enable_mcu(h);
 
 	if (do_i2c) {
 		i2c_scan(h);

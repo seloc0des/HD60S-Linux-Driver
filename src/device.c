@@ -23,6 +23,7 @@
 #define RT_OUT (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT | LIBUSB_RECIPIENT_DEVICE)
 
 #define NUM_XFERS 8
+#define NUM_XFERS_BULK 32   /* 1080p60 YUY2 is ~249 MB/s; keep the pipe deep */
 #define PKTS_PER_XFER 64
 
 /* --- control primitives ------------------------------------------------ */
@@ -367,11 +368,12 @@ static void LIBUSB_CALL bulk_cb(struct libusb_transfer *x)
 
 static int stream_start_bulk(struct hd60s_dev *d, int alt, int mps, int burst)
 {
-	/* one URB = burst-sized chunks; big enough to keep the pipe full */
-	size_t len = (size_t)mps * (burst + 1) * 8;
+	/* one URB = burst-sized chunks; big enough to keep the pipe full.
+	 * 1080p60 YUY2 runs at ~249 MB/s, so shallow queues drop most of it. */
+	size_t len = (size_t)mps * (burst + 1) * 16;
 	int i;
 
-	for (i = 0; i < NUM_XFERS; i++) {
+	for (i = 0; i < NUM_XFERS_BULK; i++) {
 		uint8_t *buf = malloc(len);
 		struct libusb_transfer *x = libusb_alloc_transfer(0);
 

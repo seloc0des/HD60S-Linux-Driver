@@ -16,6 +16,7 @@
 
 #include "device.h"
 #include "frame.h"
+#include "framer.h"
 #include "hd60s.h"
 
 static volatile sig_atomic_t stop;
@@ -37,6 +38,9 @@ static uint64_t now_ns(void)
 static const char *g_script;
 static const char *g_post_script;
 static const char *g_hunt;
+static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
+static struct hd60s_framer g_framer;
+static int g_use_framer;
 static int g_diagnose;
 
 /* Capture path.
@@ -56,6 +60,12 @@ static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
 {
 	(void)d;
 	g_dev_bytes += (unsigned long long)len;
+	if (g_rawdump)
+		fwrite(buf, 1, (size_t)len, g_rawdump);
+	if (g_use_framer) {
+		hd60s_framer_push(&g_framer, buf, (size_t)len);
+		return;
+	}
 	if (!g_accum || g_frame_ready)
 		return;
 	if (g_accum_len + (size_t)len > g_frame_sz)
@@ -66,6 +76,18 @@ static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
 	g_accum_len += (size_t)len;
 	if (g_accum_len >= g_frame_sz)
 		g_frame_ready = 1;
+}
+
+/* The framer resyncs on the per-line marker, so a complete frame here is
+ * already the right geometry -- just hand it to the sink. */
+static void on_full_frame(void *user, const uint8_t *frame, size_t len)
+{
+	(void)user;
+	if (!g_accum || g_frame_ready || len != g_frame_sz)
+		return;
+	memcpy(g_accum, frame, len);
+	g_accum_len = len;
+	g_frame_ready = 1;
 }
 
 /* Ask the receiver what it sees; cheap enough to poll once a second. */
@@ -215,6 +237,17 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 	}
 
 	if (have_dev) {
+		/* Real capture is 1920x1080 YUY2; anything else means the caller
+		 * asked for a size the framer cannot produce, so leave it off. */
+		if (w == HD60S_ACTIVE_W && h == HD60S_ACTIVE_H) {
+			if (hd60s_framer_init(&g_framer, on_full_frame, NULL) == 0)
+				g_use_framer = 1;
+			else
+				log_warn("framer alloc failed; raw passthrough");
+		} else {
+			log_warn("--size %ux%u is not the native frame; "
+				 "line markers will not be stripped", w, h);
+		}
 		dev.on_data = on_iso_data;
 		dev.diag_left = 10;
 		if (hd60s_stream_start(&dev, alt) < 0)
@@ -225,10 +258,13 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			run_hunt(&dev, g_hunt);
 	}
 
+	uint64_t last_video = 0;
+
 	log_info("feeding %s at %ux%u %ufps -- ctrl-c to stop", sinkspec, w, h, fps);
 	period = 1000000000ull / (fps ? fps : 60);
 	next = now_ns();
 	t0 = time(NULL);
+	last_video = 0;
 
 	while (!stop && (seconds <= 0 || time(NULL) - t0 < seconds)) {
 		uint64_t t;
@@ -270,6 +306,10 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			memcpy(f.data, g_accum, f.size);
 			g_accum_len = 0;
 			g_frame_ready = 0;
+			last_video = now_ns();
+		} else if (last_video && now_ns() - last_video < 1000000000ull) {
+			/* between captures -- repeat the last picture rather than
+			 * stamping a status card over live video */
 		} else {
 			hd60s_statusframe_fill(&f, state, l1, l2, l3);
 		}
@@ -290,8 +330,11 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 
 	if (have_dev) {
 		hd60s_stream_stop(&dev);
-		log_info("iso packets %llu, with data %llu, bytes %llu",
+		log_info("urbs %llu, with data %llu, bytes %llu",
 			 dev.pkts, dev.nonempty, dev.bytes);
+		if (g_use_framer)
+			log_info("frames %llu, resyncs %llu", g_framer.frames,
+				 g_framer.resyncs);
 		hd60s_close(&dev);
 	}
 	g_sink->close(g_sink);
@@ -306,7 +349,7 @@ static void usage(const char *argv0)
 		"  --source test|device   test = synthetic bars (default)\n"
 		"                         device = real capture (NOT IMPLEMENTED)\n"
 		"  --sink SPEC            raw:PATH | v4l2:/dev/videoN | - (stdout)\n"
-		"  --size WxH             default 1280x720\n"
+		"  --size WxH             default 1920x1080 (the device's native frame)\n"
 		"  --fps N                default 60\n"
 		"  --frames N             stop after N frames (0 = forever)\n"
 		"  --alt N                iso alt setting for --source device (1 or 2)\n"
@@ -315,6 +358,7 @@ static void usage(const char *argv0)
 		"  --script FILE          run a bring-up script before streaming\n"
 		"  --post-script FILE     run a script AFTER SET_INTERFACE\n"
 		"  --hunt FILE            try each line in turn, watching for bytes\n"
+		"  --rawdump FILE         write the device byte stream verbatim\n"
 		"  -v                     verbose\n",
 		argv0);
 }
@@ -322,7 +366,7 @@ static void usage(const char *argv0)
 int main(int argc, char **argv)
 {
 	const char *source = "test", *sinkspec = "-";
-	uint32_t w = 1280, h = 720, fps = 60;
+	uint32_t w = 1920, h = 1080, fps = 60;   /* what the device actually sends */
 	int alt = 2, seconds = 0;
 	uint64_t want_frames = 0, seq = 0;
 	struct hd60s_sink *sink;
@@ -352,6 +396,13 @@ int main(int argc, char **argv)
 			g_post_script = argv[++i];
 		else if (!strcmp(argv[i], "--hunt") && i + 1 < argc)
 			g_hunt = argv[++i];
+		else if (!strcmp(argv[i], "--rawdump") && i + 1 < argc) {
+			g_rawdump = fopen(argv[++i], "wb");
+			if (!g_rawdump) {
+				log_err("cannot open rawdump: %s", strerror(errno));
+				return 2;
+			}
+		}
 		else if (!strcmp(argv[i], "--alt") && i + 1 < argc)
 			alt = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--seconds") && i + 1 < argc)

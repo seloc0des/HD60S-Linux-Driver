@@ -1,5 +1,6 @@
 hd60s-probe
 hd60s-dumpram
+hd60s-writetest
 hd60sd
 *.o
 docs/enumerations/

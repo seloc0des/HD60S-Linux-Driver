@@ -221,46 +221,100 @@ address 0:
 The targets sit in `0x4000_0000`+, the FX3 SYSMEM window, which is where the
 running firmware lives.
 
-#### The window is capped at 252 bytes [OBSERVED]
+#### The read window is 255 bytes [OBSERVED]
 
 Addressing is genuinely byte-granular — a read at `0x84` returns exactly the
 4-byte-shifted content of a read at `0x80`, so this is real memory indexing and
 not a canned buffer.
 
-But the handler enforces `addr + len <= 0xFC`. Probing 4-byte reads:
+The handler enforces **`addr + len <= 0xFF`**. Single-byte reads:
 
-| Start | Result |
+| Address | Result |
 |---|---|
-| `0xd0`, `0xe0`, `0xf0`, `0xf8` | ok |
-| `0xfc`, `0x100`, `0x110`, `0x140`, `0x200` | stall |
+| `0xf8`, `0xfb`, `0xfc`, `0xfd`, `0xfe` | ok |
+| `0xff`, `0x100`, `0x101` | stall |
 
-The check is on the **end** of the transfer, not the start: `0xc0`+16 succeeds
-while `0xc0`+64 (ending at `0x100`) is rejected outright. Over-long requests are
-refused entirely rather than truncated.
+and varying the length from `0xf0`:
 
-So exactly **252 bytes** (`0x00`–`0xFB`) are exposed — captured in
-`docs/captures/window-252.bin`. Everything beyond stalls cleanly, which is a
-deliberate bounds check rather than a fault.
+| Transfer | End | Result |
+|---|---|---|
+| `0xf0`+14 | `0xfe` | ok |
+| `0xf0`+15 | `0xff` | ok |
+| `0xf0`+16 | `0x100` | stall |
 
-**A full firmware dump over `0xA0` is therefore not possible.** The vendor
-command handler lives in SYSMEM at `0x4000_0000`+ and is unreachable.
+The check is on the **end** of the transfer, not the start, and over-long
+requests are refused whole rather than truncated. So `0xc0`+16 succeeds while
+`0xc0`+64 (ending at `0x100`) is rejected.
 
-#### What the 252 bytes contain [OBSERVED]
+Readable range is therefore `0x00`–`0xFE`, **255 bytes**. Byte `0xFF` exists but
+is unreachable: any transfer including it ends at `0x100` or beyond. That looks
+like an off-by-one in the bounds check — `addr + len < 0x100` rather than
+`<= 0x100`.
+
+> **Correction.** This was previously documented as 252 bytes with the bound at
+> `0xFC`. That came from probing on 4-byte alignment, where `0xfc`+4 ends at
+> `0x100` and stalls — the alignment hid the real boundary. Single-byte probes
+> show `0xfc`, `0xfd` and `0xfe` all read fine. `docs/captures/window-252.bin`
+> keeps its filename but holds the first 252 of those 255 bytes.
+
+**A full firmware dump over `0xA0` is still not possible.** The vendor command
+handler lives in SYSMEM at `0x4000_0000`+, far outside a 255-byte window.
+
+#### What the window contains [OBSERVED]
 
 | Range | Content |
 |---|---|
 | `0x00`–`0x2f` | ARM exception vectors, plus `B .` spin and `BX LR` handlers |
 | `0x30`–`0x4b` | seven SYSMEM branch targets |
 | `0x4c`–`0x7f` | six `LDR PC,[PC,#-4]` + absolute-address trampoline pairs, targeting I-TCM |
-| `0x80`–`0xfb` | 124 bytes, high entropy (98 distinct values in 124 bytes, max repeat 3) |
+| `0x80`–`0xfe` | uninitialised SRAM (see below) |
 
 The trampoline targets are I-TCM offsets `0x113c`, `0x204`, `0x76c`, `0x158`,
 `0x11a8`, `0xfd8` — all inside the 16 KB I-TCM but outside the readable window.
 
-The `0x80`–`0xfb` block is statistically random and **constant across repeated
-reads** (verified three times), so it is not a nonce, RNG output or counter.
-[UNKNOWN] whether it is a key, a signature, a device-unique identifier, or
-simply uninitialised memory.
+#### `0x80`–`0xfe` is uninitialised SRAM [OBSERVED]
+
+The block looks statistically random and is constant across repeated reads
+*within one power cycle*, so it is not a nonce, counter or RNG output. Across a
+power cycle it changes — but only slightly:
+
+| Measure | Value |
+|---|---|
+| bits differing across a power cycle | 52 / 992 (**5.2 %**) |
+| bytes unchanged | 80 / 124 |
+| bytes differing by 1 bit | 36 |
+| bytes differing by 2 bits | 8 |
+| `0x00`–`0x7f` (code) | byte-identical |
+
+A freshly generated key or nonce would differ in roughly 50 % of bits. A few
+percent is the signature of **uninitialised SRAM**: each cell has a
+manufacturing bias that dominates its power-on state, while a metastable
+minority flips run to run. This is the same effect SRAM PUFs exploit.
+
+So the region carries no secret and no identity — it is simply memory nobody
+wrote yet. Earlier `[UNKNOWN]` resolved.
+
+#### `0xA0` also accepts writes [OBSERVED]
+
+The OUT direction (`bmRequestType 0x40`) is live. Verified twice:
+
+- an **idempotent** write at `0xfb` (read `0x94`, write `0x94` back) was
+  accepted, changing nothing;
+- a write of `0x5a` at `0xfc` was accepted and the read-back changed from
+  `0x87` to `0x5a`.
+
+So the device really does poke RAM, not merely ACK the transfer. The device
+stayed healthy afterwards.
+
+[UNKNOWN] Whether writes obey the same `addr + len <= 0xFF` bound as reads. That
+needs a blind write past the read window, since there is no way to read back and
+confirm. It matters: if writes reach further than reads, the FX3 download
+protocol (write a flash reader into RAM, then jump to it) may be usable to dump
+the real firmware. If writes share the 255-byte bound, that route is closed.
+
+Note the FX3 boot protocol treats a **zero-length** `0xA0` as "jump to the
+address in wValue/wIndex". `hd60s-writetest` refuses zero-length writes so this
+cannot happen by accident.
 
 #### Where the firmware could still come from
 

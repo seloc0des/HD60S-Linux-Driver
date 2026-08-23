@@ -1,0 +1,23 @@
+# Read-only probe: confirms the control plane and reports what the
+# receiver sees. Safe to run any time; writes nothing.
+
+# The vendor driver's mode-detect inputs (MST3367_HDMI_MODE_DETECT, VMA 0x18ec0)
+mst_read 0x01 0x55        # its first test is (this & 0x3c) == 0x3c
+mst_read 0x01 0x57
+mst_read 0x01 0x58
+mst_read 0x01 0x59
+mst_read 0x01 0x5a
+mst_read 0x01 0x5b
+mst_read 0x01 0x5c
+mst_read 0x01 0x5f
+mst_read 0x01 0x6a
+mst_read 0x01 0x6b
+mst_read 0x02 0x29
+
+# chip identity, as a sanity check that I2C is alive
+i2c_read 0x9a 0x00        # IT6612 vendor ID low, expect 0x54
+i2c_read 0x9a 0x02        # device ID low, expect 0x12
+
+# FPGA state after the handshake
+fpga_read 0x34
+fpga_read 0x39

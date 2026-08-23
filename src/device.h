@@ -44,4 +44,7 @@ int hd60s_stream_start(struct hd60s_dev *d, int alt);
 void hd60s_stream_stop(struct hd60s_dev *d);
 int hd60s_pump(struct hd60s_dev *d, int ms);
 
+/* Execute a bring-up script; see the grammar in device.c. */
+int hd60s_run_script(struct hd60s_dev *d, const char *path);
+
 #endif /* HD60S_DEVICE_H */

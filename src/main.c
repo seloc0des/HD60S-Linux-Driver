@@ -51,6 +51,8 @@ static void on_iso_data(struct hd60s_dev *d, const uint8_t *buf, int len)
 		g_written += (unsigned long long)len;
 }
 
+static const char *g_script;
+
 static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		      int seconds)
 {
@@ -68,6 +70,9 @@ static int run_device(const char *sinkspec, int alt, uint64_t max_frames,
 		hd60s_close(&dev);
 		return 1;
 	}
+
+	if (g_script && hd60s_run_script(&dev, g_script) < 0)
+		log_warn("bring-up script reported errors; continuing anyway");
 
 	/* Report what the receiver thinks, using the vendor driver's own test:
 	 * MST3367_HDMI_MODE_DETECT checks (page-reg 0x55 & 0x3c) == 0x3c. */
@@ -125,6 +130,7 @@ static void usage(const char *argv0)
 		"  --frames N             stop after N frames (0 = forever)\n"
 		"  --alt N                iso alt setting for --source device (1 or 2)\n"
 		"  --seconds N            stop after N seconds (device source)\n"
+		"  --script FILE          run a bring-up script before streaming\n"
 		"  -v                     verbose\n",
 		argv0);
 }
@@ -154,6 +160,8 @@ int main(int argc, char **argv)
 			fps = (uint32_t)atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--frames") && i + 1 < argc)
 			want_frames = strtoull(argv[++i], NULL, 10);
+		else if (!strcmp(argv[i], "--script") && i + 1 < argc)
+			g_script = argv[++i];
 		else if (!strcmp(argv[i], "--alt") && i + 1 < argc)
 			alt = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--seconds") && i + 1 < argc)

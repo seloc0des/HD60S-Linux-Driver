@@ -6,6 +6,7 @@
  * more of the vendor init is resolved without touching the transport.
  */
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -252,4 +253,155 @@ void hd60s_close(struct hd60s_dev *d)
 	if (d->ctx)
 		libusb_exit(d->ctx);
 	memset(d, 0, sizeof(*d));
+}
+
+/* --- scripted bring-up ------------------------------------------------- */
+
+/* The bring-up sequence is still being recovered from the vendor driver, so it
+ * lives in a text file rather than in this binary. Iterating on it must not
+ * require a rebuild.
+ *
+ * Grammar, one operation per line, '#' to end of line is a comment:
+ *
+ *   fpga_write REG VAL          FPGA/CPLD register file (bRequest 0xC1)
+ *   fpga_read  REG              read and log
+ *   i2c_write  SLAVE REG VAL    via the MCU proxy
+ *   i2c_read   SLAVE REG
+ *   mst_write  PAGE REG VAL     MST3367 receiver, page-selected
+ *   mst_read   PAGE REG
+ *   delay      MS
+ *   poll_mst   PAGE REG MASK WANT [TRIES]   until (val & MASK) == WANT
+ *   expect_mst PAGE REG MASK WANT           one-shot check, warns on mismatch
+ *
+ * Numbers may be decimal or 0x-prefixed.
+ */
+static int parse_num(const char *s, long *out)
+{
+	char *end;
+	long v = strtol(s, &end, 0);
+
+	if (end == s || *end)
+		return -1;
+	*out = v;
+	return 0;
+}
+
+int hd60s_run_script(struct hd60s_dev *d, const char *path)
+{
+	char line[256];
+	FILE *f = fopen(path, "r");
+	int lineno = 0, errors = 0;
+
+	if (!f) {
+		log_err("cannot open %s: %s", path, strerror(errno));
+		return -1;
+	}
+	log_info("running bring-up script %s", path);
+
+	while (fgets(line, sizeof(line), f)) {
+		char *tok[6], *p, *save = NULL;
+		int n = 0;
+		long a[4];
+
+		lineno++;
+		p = strchr(line, '#');
+		if (p)
+			*p = '\0';
+		for (p = strtok_r(line, " \t\r\n", &save); p && n < 6;
+		     p = strtok_r(NULL, " \t\r\n", &save))
+			tok[n++] = p;
+		if (!n)
+			continue;
+
+		/* every operand must parse before we touch the device */
+		{
+			int i, bad = 0;
+
+			for (i = 1; i < n && i <= 4; i++)
+				if (parse_num(tok[i], &a[i - 1]) < 0)
+					bad = 1;
+			if (bad) {
+				log_err("%s:%d: bad number", path, lineno);
+				errors++;
+				continue;
+			}
+		}
+
+		if (!strcmp(tok[0], "delay") && n == 2) {
+			usleep((useconds_t)a[0] * 1000);
+		} else if (!strcmp(tok[0], "fpga_write") && n == 3) {
+			if (hd60s_fpga_write(d, (uint8_t)a[0], (uint8_t)a[1]) < 0) {
+				log_err("%s:%d: fpga_write 0x%02lx = 0x%02lx rejected",
+					path, lineno, a[0], a[1]);
+				errors++;
+			}
+		} else if (!strcmp(tok[0], "fpga_read") && n == 2) {
+			uint8_t v;
+
+			if (hd60s_fpga_read(d, (uint8_t)a[0], &v) == 0)
+				log_info("  fpga 0x%02lx = 0x%02x", a[0], v);
+			else
+				log_warn("  fpga 0x%02lx unreadable", a[0]);
+		} else if (!strcmp(tok[0], "i2c_write") && n == 4) {
+			if (hd60s_i2c_write(d, (uint8_t)a[0], (uint8_t)a[1],
+					    (uint8_t)a[2]) < 0) {
+				log_err("%s:%d: i2c_write rejected", path, lineno);
+				errors++;
+			}
+		} else if (!strcmp(tok[0], "i2c_read") && n == 3) {
+			uint8_t v;
+
+			if (hd60s_i2c_read(d, (uint8_t)a[0], (uint8_t)a[1], &v) == 0)
+				log_info("  i2c 0x%02lx reg 0x%02lx = 0x%02x",
+					 a[0], a[1], v);
+		} else if (!strcmp(tok[0], "mst_write") && n == 4) {
+			if (hd60s_mst_write(d, (uint8_t)a[0], (uint8_t)a[1],
+					    (uint8_t)a[2]) < 0) {
+				log_err("%s:%d: mst_write rejected", path, lineno);
+				errors++;
+			}
+		} else if (!strcmp(tok[0], "mst_read") && n == 3) {
+			uint8_t v;
+
+			if (hd60s_mst_read(d, (uint8_t)a[0], (uint8_t)a[1], &v) == 0)
+				log_info("  mst page 0x%02lx reg 0x%02lx = 0x%02x",
+					 a[0], a[1], v);
+		} else if (!strcmp(tok[0], "poll_mst") && (n == 5 || n == 6)) {
+			long tries = (n == 6) ? a[4 - 1] : 100;
+			uint8_t v = 0;
+			int i, got = 0;
+
+			/* n==6 puts TRIES in tok[5]; re-parse to keep it simple */
+			if (n == 6 && parse_num(tok[5], &tries) < 0)
+				tries = 100;
+			for (i = 0; i < tries; i++) {
+				usleep(10 * 1000);
+				if (hd60s_mst_read(d, (uint8_t)a[0], (uint8_t)a[1],
+						   &v) == 0 &&
+				    (v & (uint8_t)a[2]) == (uint8_t)a[3]) {
+					got = 1;
+					break;
+				}
+			}
+			log_info("  poll page 0x%02lx reg 0x%02lx -> 0x%02x %s"
+				 " after %d", a[0], a[1], v,
+				 got ? "MATCH" : "TIMEOUT", i);
+			if (!got)
+				errors++;
+		} else if (!strcmp(tok[0], "expect_mst") && n == 5) {
+			uint8_t v = 0;
+
+			hd60s_mst_read(d, (uint8_t)a[0], (uint8_t)a[1], &v);
+			log_info("  expect page 0x%02lx reg 0x%02lx = 0x%02x -> %s",
+				 a[0], a[1], v,
+				 (v & (uint8_t)a[2]) == (uint8_t)a[3] ? "ok" : "MISMATCH");
+		} else {
+			log_err("%s:%d: unknown op '%s' with %d arg(s)", path,
+				lineno, tok[0], n - 1);
+			errors++;
+		}
+	}
+	fclose(f);
+	log_info("script done, %d error(s)", errors);
+	return errors ? -1 : 0;
 }

@@ -2111,3 +2111,45 @@ the vendor app opens the stream, so the SET_INTERFACE and the stream-open 0xC0
 commands are recorded. See docs/WINDOWS-CAPTURE.md. Absent that, audio cannot be
 resolved without risking the datapath, and the 0xd4 blast showed that risk is
 real.
+
+### 10.10 THE AUDIO-ENABLE SEQUENCE, captured live [OBSERVED]
+
+trial2.pcapng caught the transition from video-only to video+audio. The first
+FF 00 FF audio record appears immediately after this exact write sequence
+(trial2 idx 34451-34599), which the device performs once at stream-open and never
+repeats:
+
+```
+# IT6612 (HDMI transmitter, I2C slave 0x9a) -- audio config we never touch
+i2c_write 0x9a 0x0f 0x00
+i2c_write 0x9a 0xc1 0x01
+i2c_write 0x9a 0xc6 0x03
+# MST3367 mute -> EDID-SRAM touch -> unmute cycle
+mst_write 0x00 0xab 0x95      # set CSC/RAM write gate (bit 7)
+mst_write 0x02 0x27 0xff      # MUTE audio
+mst_write 0x00 0xb3 0xff      # MUTE video
+mst_write 0x01 0x24 0x41      # EDID-SRAM control = write-enable
+mst_write 0x01 0x25 0x00      # EDID addr lo
+mst_write 0x01 0x26 0x00      # EDID addr hi
+mst_write 0x01 0x27 0x00      # EDID data (a few writes)
+mst_write 0x00 0xab 0x15      # clear gate (bit 7)
+mst_write 0x02 0x27 0x00      # UNMUTE audio
+mst_write 0x00 0xb3 0x00      # UNMUTE video
+mst_write 0x02 0x0e 0x00
+# then SET_INTERFACE alt=2 (iso) -- the stream (re)start
+```
+
+The vendor streams on **iso alt 2** (SET_IF alt=2 in the capture), not bulk.
+
+**HAZARD found while replaying it:** `p1 0x24 = 0x41` is the EDID-SRAM
+write-enable, and it briefly disables the HDMI EDID. Replayed on its own via our
+(slower) MCU proxy it left the EDID disabled long enough that the Switch dropped
+sync and would not relock without a physical HDMI reseat. The vendor gets away
+with it because the MCU does the whole mute/reconfigure/unmute as one fast
+managed operation. So this sequence must be replayed COMPLETELY and quickly, or
+the EDID part must be omitted. The IT6612 (0x9a) writes and the audio
+mute/unmute are the low-risk parts; the EDID touch is the dangerous part and is
+most likely incidental to audio (a format-change EDID refresh), not the enabler.
+
+Safe subset to try first: the three IT6612 (0x9a) writes plus the audio unmute
+(p2 0x27 = 0x00), with NO EDID manipulation.

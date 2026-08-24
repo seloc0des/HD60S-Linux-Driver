@@ -209,7 +209,7 @@ kernel/     notes toward an eventual kernel driver
 GPL-3.0, see [LICENSE](LICENSE).
 
 Reverse engineered and written by Sean Elovirta
-([selodev3d](https://github.com/selodev3d)).
+([seloc0des](https://github.com/seloc0des)).
 
 The symbol map used during reverse engineering is not shipped; regenerate it
 from Elgato's own driver package with `tools/pdbsyms.py` if you need it.

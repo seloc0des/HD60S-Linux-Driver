@@ -42,6 +42,7 @@ static const char *g_hunt;
 static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
 static FILE *g_audio_out;  /* demuxed PCM (16-bit stereo LE 48k) */
 static unsigned long long g_audio_written;
+static uint64_t g_audio_t0, g_audio_t1;
 static struct hd60s_framer g_framer;
 static int g_use_framer;
 static int g_diagnose;
@@ -97,10 +98,11 @@ static void on_full_frame(void *user, const uint8_t *frame, size_t len)
 static void on_audio_pcm(void *user, const uint8_t *pcm, size_t len)
 {
 	(void)user;
-	if (g_audio_out) {
+	if (!g_audio_t0) g_audio_t0 = now_ns();
+	g_audio_t1 = now_ns();
+	g_audio_written += len;
+	if (g_audio_out)
 		fwrite(pcm, 1, len, g_audio_out);
-		g_audio_written += len;
-	}
 }
 
 /* Ask the receiver what it sees; cheap enough to poll once a second. */
@@ -377,6 +379,12 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			log_info("frames %llu, resyncs %llu, audio records %llu "
 				 "(%llu bytes)", g_framer.frames, g_framer.resyncs,
 				 g_framer.audio_recs, g_framer.audio_bytes);
+		if (g_audio_t1 > g_audio_t0) {
+			double sec = (g_audio_t1 - g_audio_t0) / 1e9;
+			log_info("audio: %llu bytes over %.2fs = %.0f Hz "
+				 "(16-bit stereo)", g_audio_written, sec,
+				 g_audio_written / 4.0 / sec);
+		}
 		hd60s_close(&dev);
 	}
 	g_sink->close(g_sink);

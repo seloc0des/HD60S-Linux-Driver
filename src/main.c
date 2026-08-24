@@ -40,6 +40,8 @@ static const char *g_post_script;
 static int g_audio;   /* stream, then apply the audio-enable + restart the pipe */
 static const char *g_hunt;
 static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
+static FILE *g_audio_out;  /* demuxed PCM (16-bit stereo LE 48k) */
+static unsigned long long g_audio_written;
 static struct hd60s_framer g_framer;
 static int g_use_framer;
 static int g_diagnose;
@@ -89,6 +91,16 @@ static void on_full_frame(void *user, const uint8_t *frame, size_t len)
 	memcpy(g_accum, frame, len);
 	g_accum_len = len;
 	g_frame_ready = 1;
+}
+
+/* Demuxed audio: 16-bit stereo LE PCM. Written to the audio sink verbatim. */
+static void on_audio_pcm(void *user, const uint8_t *pcm, size_t len)
+{
+	(void)user;
+	if (g_audio_out) {
+		fwrite(pcm, 1, len, g_audio_out);
+		g_audio_written += len;
+	}
 }
 
 /* Ask the receiver what it sees; cheap enough to poll once a second. */
@@ -150,8 +162,7 @@ static void run_hunt(struct hd60s_dev *d, const char *path)
 	while (fgets(line, sizeof(line), f)) {
 		unsigned long long before = d->bytes;
 		unsigned long long fr0 = g_framer.frames;
-		unsigned long long odd0 = g_framer.oddmark;
-		unsigned long long dirty0 = g_framer.blank_dirty;
+		unsigned long long aud0 = g_framer.audio_recs;
 		char tmp[] = "/tmp/hd60s-huntXXXXXX";
 		char *p = strchr(line, '#');
 		int fd, i;
@@ -188,16 +199,14 @@ static void run_hunt(struct hd60s_dev *d, const char *path)
 
 		if (d->bytes > before) {
 			log_info("    [%d] %s -> %llu B, +%llu frames, "
-				 "+%llu odd, +%llu dirty-blank", n, p,
-				 d->bytes - before,
+				 "+%llu audio", n, p, d->bytes - before,
 				 g_framer.frames - fr0,
-				 g_framer.oddmark - odd0,
-				 g_framer.blank_dirty - dirty0);
+				 g_framer.audio_recs - aud0);
 		} else {
 			log_info("    [%d] %s -> nothing", n, p);
 		}
-		if (g_framer.oddmark != odd0)
-			log_info("*** [%d] NEW LINE TYPE after: %s ***", n, p);
+		if (g_framer.audio_recs != aud0)
+			log_info("*** [%d] AUDIO after: %s ***", n, p);
 		if (stop)
 			break;
 	}
@@ -257,8 +266,11 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		/* Real capture is 1920x1080 YUY2; anything else means the caller
 		 * asked for a size the framer cannot produce, so leave it off. */
 		if (w == HD60S_ACTIVE_W && h == HD60S_ACTIVE_H) {
-			if (hd60s_framer_init(&g_framer, on_full_frame, NULL) == 0)
+			if (hd60s_framer_init(&g_framer, on_full_frame, NULL) == 0) {
 				g_use_framer = 1;
+				if (g_audio_out)
+					hd60s_framer_set_audio(&g_framer, on_audio_pcm);
+			}
 			else
 				log_warn("framer alloc failed; raw passthrough");
 		} else {
@@ -361,43 +373,10 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		hd60s_stream_stop(&dev);
 		log_info("urbs %llu, with data %llu, bytes %llu",
 			 dev.pkts, dev.nonempty, dev.bytes);
-		if (g_use_framer) {
-			char odd[64] = "";
-			int k;
-
-			for (k = 0; k < g_framer.noddval; k++)
-				snprintf(odd + strlen(odd), sizeof(odd) - strlen(odd),
-					 " 0x%02x", g_framer.oddval[k]);
-			log_info("frames %llu, resyncs %llu, odd markers %llu%s",
-				 g_framer.frames, g_framer.resyncs,
-				 g_framer.oddmark, odd);
-			log_info("blanking lines %llu, non-flat %llu",
-				 g_framer.blank_lines, g_framer.blank_dirty);
-			log_info("AUDIO records %llu, %llu bytes",
+		if (g_use_framer)
+			log_info("frames %llu, resyncs %llu, audio records %llu "
+				 "(%llu bytes)", g_framer.frames, g_framer.resyncs,
 				 g_framer.audio_recs, g_framer.audio_bytes);
-			if (g_framer.nbad) {
-				char b[16 * 12 + 1] = "";
-
-				for (k = 0; k < g_framer.nbad; k++)
-					snprintf(b + strlen(b), sizeof(b) - strlen(b),
-						 "%02x%02x%02x%02x ",
-						 g_framer.badsample[4 * k],
-						 g_framer.badsample[4 * k + 1],
-						 g_framer.badsample[4 * k + 2],
-						 g_framer.badsample[4 * k + 3]);
-				log_info("marker misses %llu, slots: %s",
-					 g_framer.badmark, b);
-			}
-			if (g_framer.have_dirty) {
-				char h[3 * 32 + 1];
-
-				for (k = 0; k < 32; k++)
-					sprintf(h + 3 * k, "%02x ",
-						g_framer.dirty_sample[k]);
-				log_info("non-flat blanking at byte %zu: %s",
-					 g_framer.dirty_at, h);
-			}
-		}
 		hd60s_close(&dev);
 	}
 	g_sink->close(g_sink);
@@ -461,6 +440,13 @@ int main(int argc, char **argv)
 			g_hunt = argv[++i];
 		else if (!strcmp(argv[i], "--audio"))
 			g_audio = 1;
+		else if (!strcmp(argv[i], "--audio-out") && i + 1 < argc) {
+			g_audio_out = fopen(argv[++i], "wb");
+			if (!g_audio_out) {
+				log_err("cannot open audio-out: %s", strerror(errno));
+				return 2;
+			}
+		}
 		else if (!strcmp(argv[i], "--rawdump") && i + 1 < argc) {
 			g_rawdump = fopen(argv[++i], "wb");
 			if (!g_rawdump) {

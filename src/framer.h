@@ -4,54 +4,37 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The HD60 S sends whole frames including blanking, as a flat byte stream:
+/* The device emits a marker-first record stream, records interleaved freely:
  *
- *   line = 3840 bytes of YUY2 (1920 px) + a 4-byte marker FF 00 00 KK
- *   KK   = 0x80 on an active line, 0xAB on a blanking line
- *   frame = 1080 active lines + 45 blanking lines = 1125 x 3844 bytes
+ *   video line : FF 00 00 KK + 3840 bytes YUY2   (KK = 0x80 active, 0xAB blank)
+ *   audio      : FF 00 FF NN + NN*4 bytes         (16-bit stereo LE PCM)
  *
- * So the stream describes its own geometry and we can resync from anywhere.
+ * A frame is 1080 active lines; the 45 blank lines mark the vertical interval.
  */
 #define HD60S_LINE_PIC 3840
-#define HD60S_LINE_LEN 3844
 #define HD60S_ACTIVE_W 1920
 #define HD60S_ACTIVE_H 1080
 #define HD60S_MARK_ACTIVE 0x80
 #define HD60S_MARK_BLANK 0xAB
 
-/* Audio rides the same stream under a different marker: FF 00 FF LL, with
- * LL*4 bytes of 16-bit stereo LE PCM following the marker. Our first parser
- * only matched FF 00 00, so audio records were never in the search space. */
-#define HD60S_MARK_AUDIO 0xFF
-
 typedef void (*hd60s_frame_cb)(void *user, const uint8_t *frame, size_t len);
+typedef void (*hd60s_audio_cb)(void *user, const uint8_t *pcm, size_t len);
 
 struct hd60s_framer {
-	uint8_t line[HD60S_LINE_LEN];
-	size_t lpos;
-	uint8_t *frame;
+	uint8_t *acc;           /* accumulator for the record stream */
+	size_t cap, len;
+	uint8_t *frame;         /* assembled video frame */
 	size_t fpos;
-	int synced;
 	int saw_blank;
 	unsigned long long frames, resyncs;
-	unsigned long long oddmark;      /* FF 00 00 KK with an unrecognised KK */
-	unsigned long long blank_lines, blank_dirty;  /* blanking that is not flat fill */
-	uint8_t dirty_sample[32];
-	int have_dirty;
-	size_t dirty_at;
-	unsigned long long badmark;      /* marker slot did not match at all */
-	uint8_t badsample[64];           /* 16 slots of 4 bytes */
-	int nbad;
 	unsigned long long audio_recs, audio_bytes;
-	uint8_t audio_len[8];
-	int naudio_len;
-	uint8_t oddval[8];
-	int noddval;
 	hd60s_frame_cb on_frame;
+	hd60s_audio_cb on_audio;
 	void *user;
 };
 
 int hd60s_framer_init(struct hd60s_framer *f, hd60s_frame_cb cb, void *user);
+void hd60s_framer_set_audio(struct hd60s_framer *f, hd60s_audio_cb cb);
 void hd60s_framer_free(struct hd60s_framer *f);
 void hd60s_framer_push(struct hd60s_framer *f, const uint8_t *data, size_t len);
 

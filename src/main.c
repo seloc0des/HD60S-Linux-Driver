@@ -330,7 +330,13 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		else
 			usleep(5000);
 
-		if (time(NULL) != last_poll) {
+		int video_live = last_video &&
+				 now_ns() - last_video < 1000000000ull;
+
+		/* Poll the receiver only when there's no live picture: the MCU
+		 * proxy round-trips stall the URB pump long enough to drop a
+		 * frame, and the status text is only shown on the idle card. */
+		if (time(NULL) != last_poll && !video_live) {
 			last_poll = time(NULL);
 			if (have_dev) {
 				receiver_status(&dev, &state, l1, l2, l3, sizeof(l1));
@@ -359,29 +365,39 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		}
 
 		if (g_frame_ready) {
+			/* write the frame the moment it lands: the device clock
+			 * paces the sink, so there's no beat against a local
+			 * 60.000 timer (the source is really ~59.94) */
 			memcpy(f.data, g_accum, f.size);
 			g_accum_len = 0;
 			g_frame_ready = 0;
 			last_video = now_ns();
-		} else if (last_video && now_ns() - last_video < 1000000000ull) {
-			/* between captures -- repeat the last picture rather than
-			 * stamping a status card over live video */
+			f.seq++;
+			f.ts_ns = last_video;
+			if (g_sink->write(g_sink, &f) < 0) {
+				rc = 1;
+				break;
+			}
+			next = last_video + period;
+		} else if (video_live) {
+			/* between captures -- the loopback holds the last
+			 * picture, nothing to emit */
 		} else {
-			hd60s_statusframe_fill(&f, state, l1, l2, l3);
+			/* no signal: emit the status card at the nominal rate */
+			t = now_ns();
+			if (t >= next) {
+				hd60s_statusframe_fill(&f, state, l1, l2, l3);
+				f.seq++;
+				f.ts_ns = t;
+				if (g_sink->write(g_sink, &f) < 0) {
+					rc = 1;
+					break;
+				}
+				next += period;
+				if (next < t)
+					next = t;
+			}
 		}
-		f.seq++;
-		f.ts_ns = now_ns();
-		if (g_sink->write(g_sink, &f) < 0) {
-			rc = 1;
-			break;
-		}
-
-		next += period;
-		t = now_ns();
-		if (next > t)
-			usleep((useconds_t)((next - t) / 1000));
-		else
-			next = t;
 	}
 
 	if (have_dev) {

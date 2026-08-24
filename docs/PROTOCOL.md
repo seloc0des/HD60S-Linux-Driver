@@ -2153,3 +2153,35 @@ most likely incidental to audio (a format-change EDID refresh), not the enabler.
 
 Safe subset to try first: the three IT6612 (0x9a) writes plus the audio unmute
 (p2 0x27 = 0x00), with NO EDID manipulation.
+
+### 10.11 Audio-enable replicated faithfully -- still no audio on our unit
+
+Implemented the captured sequence in C (hd60s_audio_enable, --audio flag) with
+the EDID cycle done FAST (bare MCU-proxy writes, no 8ms delays, 0x24 restored to
+0x40 immediately). This solved the desync: the source stays locked (0x55=0x7f)
+and video is unaffected.
+
+Tested three orderings, all with video working and ZERO audio records:
+  1. audio_enable in --script, before the daemon's SET_INTERFACE
+  2. audio_enable + a second SET_INTERFACE (config, then re-select the alt)
+  3. stream first, then audio_enable while live, then stop/re-start the pipe
+     (the closest match to the vendor's "reconfigure while streaming then
+     re-SET_IF alt=2")
+
+None produces FF 00 FF records, on iso alt 2 (the vendor's alt) or bulk alt 4.
+
+**Interpretation.** Our receiver reports audio present (p2 0x9b=0x40) but the FX3
+does not packetize it, and faithfully replaying the vendor's stream-open sequence
+does not change that. Both Windows captures were mid-session (audio already
+working, or the app already attached), so neither contains the vendor driver's
+COLD init -- the traffic from a powered-off device through the first-ever audio.
+The most likely remaining explanation is that audio packetization is enabled once
+at that cold init (a 0xC0 MCU command issued before either capture began) and
+persists in the FX3 for the session. Our runtime config cannot reproduce it after
+the fact.
+
+**Only remaining lead: a COLD-INIT capture** -- Wireshark running BEFORE the
+HD60 S is plugged in, capturing enumeration through the first audio. If a
+distinct audio-enable command exists, it is there. If that capture shows nothing
+new (device self-inits, audio purely source-driven), then audio is gated by FX3
+firmware state we cannot reach over USB, and is not obtainable with this driver.

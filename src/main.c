@@ -37,6 +37,7 @@ static uint64_t now_ns(void)
 
 static const char *g_script;
 static const char *g_post_script;
+static int g_audio;   /* stream, then apply the audio-enable + restart the pipe */
 static const char *g_hunt;
 static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
 static struct hd60s_framer g_framer;
@@ -268,6 +269,18 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 		dev.diag_left = 10;
 		if (hd60s_stream_start(&dev, alt) < 0)
 			log_warn("iso streaming did not start; status only");
+		if (g_audio) {
+			/* Vendor order: stream first, then apply the audio-enable
+			 * config while the pipe is live, then restart the pipe so
+			 * the FX3 picks up audio. */
+			int k;
+			for (k = 0; k < 400; k++) hd60s_pump(&dev, 5);
+			log_info("applying audio-enable, then restarting the pipe");
+			hd60s_audio_enable(&dev);
+			hd60s_stream_stop(&dev);
+			hd60s_audio_enable(&dev);
+			hd60s_stream_start(&dev, alt);
+		}
 		if (g_post_script && hd60s_run_script(&dev, g_post_script) < 0)
 			log_warn("post-stream script reported errors");
 		if (g_hunt)
@@ -446,6 +459,8 @@ int main(int argc, char **argv)
 			g_post_script = argv[++i];
 		else if (!strcmp(argv[i], "--hunt") && i + 1 < argc)
 			g_hunt = argv[++i];
+		else if (!strcmp(argv[i], "--audio"))
+			g_audio = 1;
 		else if (!strcmp(argv[i], "--rawdump") && i + 1 < argc) {
 			g_rawdump = fopen(argv[++i], "wb");
 			if (!g_rawdump) {

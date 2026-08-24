@@ -688,6 +688,13 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 				 got ? "MATCH" : "TIMEOUT", i);
 			if (!got)
 				errors++;
+		} else if (!strcmp(tok[0], "audio_enable") && n == 1) {
+			if (hd60s_audio_enable(d) < 0) {
+				log_err("%s:%d: audio_enable failed", path, lineno);
+				errors++;
+			} else {
+				log_info("  audio_enable sequence sent");
+			}
 		} else if (!strcmp(tok[0], "mcu_write") && n >= 2) {
 			/* mcu_write CMD [byte...] -- the MCU is the gateway to
 			 * everything, so talking to it directly is worth a verb */
@@ -917,4 +924,52 @@ int hd60s_enable_output(struct hd60s_dev *d)
 	hd60s_mst_write(d, 0x02, 0x07, 0x04);
 	/* bit 0 is the output enable -- this is what starts the pixels */
 	return hd60s_mst_write(d, 0x00, 0xb0, 0x25);
+}
+
+/* The vendor's stream-open audio-enable, captured verbatim (trial2 idx
+ * 34451-34599) and replayed FAST. The EDID-SRAM touch (p1 0x24=0x41) briefly
+ * disables the source's EDID; done slowly it desyncs the source, so this uses
+ * bare MCU-proxy writes with no inter-write delay and restores 0x24=0x40
+ * immediately. Followed by the caller re-selecting the alt to restart the pipe. */
+static int mst_fast(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t val)
+{
+	uint8_t sel[2] = { 0x00, page };
+	uint8_t wr[2] = { reg, val };
+	if (hd60s_mcu_write(d, HD60S_SLAVE_MST3367, sel, 2) < 0) return -1;
+	return hd60s_mcu_write(d, HD60S_SLAVE_MST3367, wr, 2);
+}
+static int mst_raw_fast(struct hd60s_dev *d, uint8_t reg, uint8_t val)
+{
+	uint8_t wr[2] = { reg, val };
+	return hd60s_mcu_write(d, HD60S_SLAVE_MST3367, wr, 2);
+}
+
+int hd60s_audio_enable(struct hd60s_dev *d)
+{
+	uint8_t p[3];
+	/* IT6612 (HDMI transmitter, slave 0x9a) audio config */
+	p[0]=0x9a; p[1]=0x0f; p[2]=0x00; hd60s_mcu_write(d, 0x66, p, 3);
+	p[0]=0x9a; p[1]=0xc1; p[2]=0x01; hd60s_mcu_write(d, 0x66, p, 3);
+	p[0]=0x9a; p[1]=0xc6; p[2]=0x03; hd60s_mcu_write(d, 0x66, p, 3);
+	/* mute */
+	mst_fast(d, 0x00, 0xab, 0x95);
+	mst_fast(d, 0x02, 0x27, 0xff);
+	mst_fast(d, 0x00, 0xb3, 0xff);
+	/* EDID-SRAM cycle -- tight, page 1 selected once, restored at once */
+	{
+		uint8_t sel[2] = { 0x00, 0x01 };
+		hd60s_mcu_write(d, HD60S_SLAVE_MST3367, sel, 2);
+		mst_raw_fast(d, 0x24, 0x41);
+		mst_raw_fast(d, 0x25, 0x00);
+		mst_raw_fast(d, 0x26, 0x00);
+		mst_raw_fast(d, 0x27, 0x00);
+		mst_raw_fast(d, 0x24, 0x40);   /* restore EDID immediately */
+	}
+	/* unmute */
+	mst_fast(d, 0x00, 0xab, 0x15);
+	mst_fast(d, 0x02, 0x27, 0x00);
+	mst_fast(d, 0x00, 0xb3, 0x00);
+	mst_fast(d, 0x02, 0x0e, 0x00);
+	usleep(20000);
+	return 0;
 }

@@ -43,6 +43,7 @@ int hd60s_mst_write(struct hd60s_dev *d, uint8_t page, uint8_t reg, uint8_t val)
 int hd60s_handshake(struct hd60s_dev *d);
 int hd60s_output_enabled(struct hd60s_dev *d);
 int hd60s_enable_output(struct hd60s_dev *d);
+int hd60s_audio_enable(struct hd60s_dev *d);
 int hd60s_mst_raw_write(struct hd60s_dev *d, uint8_t reg, uint8_t val);
 int hd60s_mst_raw_read(struct hd60s_dev *d, uint8_t reg, uint8_t *out);
 int hd60s_cpld_write(struct hd60s_dev *d, uint8_t reg, uint8_t val);

@@ -39,9 +39,10 @@ if command -v pactl >/dev/null 2>&1; then
   # real arrival rate instead; pacat is the fallback if ffmpeg is missing.
   if command -v ffmpeg >/dev/null 2>&1; then
     ( ffmpeg -nostdin -loglevel error -use_wallclock_as_timestamps 1 \
+        -probesize 32 -analyzeduration 0 \
         -f s16le -ar "$ARATE" -ac 2 -i "$FIFO" \
         -af aresample=async=2000:first_pts=0 \
-        -f pulse -device hd60s hd60s-audio ) &
+        -f pulse -device hd60s -buffer_duration 50 hd60s-audio ) &
   else
     ( pacat --playback --device=hd60s --rate="$ARATE" --channels=2 --format=s16le --latency-msec=50 < "$FIFO" ) &
   fi

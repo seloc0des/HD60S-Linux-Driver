@@ -1,6 +1,6 @@
 # Recovering the protocol from the vendor driver
 
-The HD60 S protocol was not reverse-engineered by probing the device — probing
+The HD60 S protocol was not reverse-engineered by probing the device - probing
 found almost nothing, because the register write encodes its value in the high
 byte of `wValue` and sends no data stage, which no blind sweep would hit.
 
@@ -23,11 +23,11 @@ That yields, among ~69 driver files:
 | File | Role |
 |---|---|
 | `GameCaptureHD60S.inf` | binds `USB\VID_0FD9&PID_005E` = "GameCapture HD60 S (Rev. 2)" |
-| `CY3014.X64.SYS` | the kernel driver (4.0 MB) — CY3014 is the CYUSB**3014** |
+| `CY3014.X64.SYS` | the kernel driver (4.0 MB) - CY3014 is the CYUSB**3014** |
 | `CY3014.X64.PDB` | **debug symbols, 3.5 MB** |
 | `CY3014.*.AX` | DirectShow filters |
 
-The INF confirms the whole family: PID `004F`, `005E` (Rev. 2 — this device),
+The INF confirms the whole family: PID `004F`, `005E` (Rev. 2 - this device),
 `0074` (Rev. 3), `0076` (Rev. 4).
 
 ## Symbols
@@ -68,5 +68,5 @@ targets.
 
 This is interoperability reverse engineering: reading a publicly distributed
 driver to make hardware the user owns work on their own operating system. No
-vendor code is copied into this project — only the wire protocol is described,
+vendor code is copied into this project - only the wire protocol is described,
 which is not itself copyrightable.

@@ -19,11 +19,11 @@ Seven addresses respond; everything else reads `0xff` (idle bus).
 |---|---|
 | `0x94` | CS53L21 audio codec |
 | `0x98` | CPLD (Altera MAX II) |
-| `0x9a` | IT6612 HDMI transmitter — passthrough |
+| `0x9a` | IT6612 HDMI transmitter - passthrough |
 | `0x9c` | MST3367 HDMI receiver |
 | `0xa4`, `0xaa`, `0xd4` | unidentified; `0xaa` is used by the firmware register poll |
 
-## IT6612 HDMI transmitter — slave `0x9a`
+## IT6612 HDMI transmitter - slave `0x9a`
 
 ```
 00: 54 49 12 16 05 60 00 00 10 b2 f8 37 00 40 8c 18
@@ -33,27 +33,27 @@ Seven addresses respond; everything else reads `0xff` (idle bus).
 `0x00`–`0x01` = `0x4954`, ITE Tech (ASCII `"IT"`). `0x02`–`0x03` = `0x1612`,
 IT6612. Register `0x0e` varies between reads, so it is live status.
 
-## CPLD — slave `0x98`
+## CPLD - slave `0x98`
 
 ```
 00: 1d 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 10: ff ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
-## CS53L21 audio codec — slave `0x94`
+## CS53L21 audio codec - slave `0x94`
 
 ```
 00: 00 d9 00 a0 0e 00 a0 00 60 42 00 00 00 00 00 00
 10: 00 00 00 00 00 88 00 00 00 00 7f 00 00 3f 00 00
 ```
 
-## MST3367 HDMI receiver — slave `0x9c`, page `0x01`
+## MST3367 HDMI receiver - slave `0x9c`, page `0x01`
 
 > **STALE.** This dump was taken before the addressing fix in PROTOCOL.md 5.13.
 > It was captured with the generic command-`0x66` form, which silently ignores
 > page selects, so the window it shows is not page 1. Page addressing has since
 > been verified correct by writing a distinct marker to each page and reading it
-> back from all four — each page holds only its own marker. Re-capture before
+> back from all four - each page holds only its own marker. Re-capture before
 > relying on the numbers below.
 
 With a live HDMI source connected (Nintendo Switch, docked, powered on):
@@ -80,7 +80,7 @@ Diffed against the same page with HDMI unplugged:
 | `0x28`–`0x29` | `06 00` | `ce 07` |
 | `0x34` | `05` | `00` |
 
-So the receiver does react to the source. But the driver's own mode test —
-`(page-reg 0x55 & 0x3c) == 0x3c` — still fails, because `0x55` reads `0x01`.
+So the receiver does react to the source. But the driver's own mode test  - 
+`(page-reg 0x55 & 0x3c) == 0x3c` - still fails, because `0x55` reads `0x01`.
 The chip sees something and has not locked, which is expected while it remains
 uninitialised.

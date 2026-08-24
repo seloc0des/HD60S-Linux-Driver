@@ -9,3 +9,6 @@ hd60sd
 *.o
 docs/enumerations/
 docs/watch.log
+*.pcapng
+*.wav
+*.pcm

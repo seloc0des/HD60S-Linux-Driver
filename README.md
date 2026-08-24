@@ -1,76 +1,120 @@
-# elgato-hd60s — Linux driver for the Elgato Game Capture HD60 S
+# elgato-hd60s - Linux driver for the Elgato Game Capture HD60 S
 
-Userspace-first Linux support for the **original** Elgato Game Capture HD60 S
-(`0fd9:005e`). Not affiliated with or supported by Elgato.
+Userspace Linux support for the **original** Elgato Game Capture HD60 S
+(`0fd9:005e`). Video and audio, straight into OBS. Not affiliated with or
+supported by Elgato.
 
-> **Status: working. 1920x1080 YUY2 at ~58 fps plus stereo audio into OBS.**
+> **Status: working. 1920x1080 YUY2 at 60 fps with stereo audio.**
 >
-> The protocol was recovered from Elgato's Windows driver (which ships with
-> debug symbols), the macOS `libUB530.dylib`, and the device's own MCU firmware,
-> then verified on real hardware. Every fact in the docs is tagged by how it is
+> There is no Linux driver for this device and it is not UVC, so it will never
+> just show up as a webcam. The protocol here was recovered from Elgato's
+> Windows driver (which ships with debug symbols), the macOS `libUB530.dylib`,
+> the device's own MCU firmware, and USB captures of the vendor software, then
+> verified on real hardware. Every fact in the docs is tagged by how it is
 > known; nothing is invented.
->
-> **Requires a SuperSpeed (USB 3.x) link.** The device's USB 2.0 personality has
-> no bulk endpoint at all, so a USB 2 cable or port physically cannot carry
-> video. `tools/hd60s-linkcheck.py` will tell you which you have.
->
-> Audio comes through as 16-bit stereo PCM on the same bulk pipe (the device
-> delivers it at an odd ~71.6 kHz — that's the real rate, confirmed by ear).
-> `obs-start.sh` feeds it into a PipeWire null sink; capture "Monitor of
-> Elgato HD60 S Audio" in OBS.
 
 The HD60 S+ is different hardware and is **not** covered.
 
-## Why a driver is needed at all
+## Requirements
 
-The device reports `bDeviceClass = 255` (vendor specific) on every interface.
-It is not UVC, so no in-tree kernel driver can bind it and it will never just
-show up as a webcam.
-
-## Watch it in OBS
+- A **SuperSpeed (USB 3.x) link**. The device's USB 2.0 personality has no
+  bulk endpoint at all, so a USB 2 cable or port physically cannot carry
+  video. `tools/hd60s-linkcheck.py` will tell you which you have.
+- `libusb`, `v4l2loopback` and a PipeWire or PulseAudio desktop:
 
 ```bash
-sudo apt install libusb-1.0-0-dev v4l2loopback-dkms v4l-utils
+sudo apt install libusb-1.0-0-dev v4l2loopback-dkms v4l-utils ffmpeg
 make
+sudo make install-udev   # device access without sudo; replug after
+```
+
+## Use it with OBS
+
+```bash
 ./scripts/obs-start.sh
 ```
 
-Then in OBS: **Sources → + → Video Capture Device (V4L2) → /dev/video2**.
-If OBS was already open, restart it so it rescans.
+Then in OBS:
 
-If there is no signal you get a status card naming what the receiver sees,
-rather than a black screen.
+1. **Sources -> + -> Video Capture Device (V4L2)** and pick `Elgato HD60 S`.
+   In the source's properties, **untick "Use Buffering"** unless you like
+   latency. Restart OBS first if it was already open, so it rescans.
+2. **Sources -> + -> Audio Output Capture** and pick `Elgato_HD60_S_Audio`.
+   (It will not appear under Audio *Input* Capture; that list is microphones
+   only.)
+3. To hear the audio live, set that source's **Audio Monitoring** to
+   "Monitor and Output" in Edit -> Advanced Audio Properties.
 
-## Quick start
+If there is no signal you get a colour-coded status card naming what the
+receiver actually sees (red for no signal, amber for locked but no data,
+green once bytes flow) instead of a black screen.
+
+### Playing off the preview
+
+The OBS preview adds a couple of frames of latency. If you play off the
+monitor rather than a passthrough display, a low-latency viewer is snappier
+than the OBS preview, and both can read the loopback at once:
 
 ```bash
-# 1. Is the link healthy? Start here -- most problems are a USB 2.0 cable
-./tools/hd60s-linkcheck.py
-
-# 2. Descriptor dump -- no dependencies, no root
-./tools/hd60s-descdump.py
-
-# 3. Watch for (re)enumeration and snapshot each one
-./tools/hd60s-watch.sh
-
-# 4. Build the RE probe
-sudo apt install libusb-1.0-0-dev     # Fedora: libusb1-devel  Arch: libusb
-make
-
-# 5. Device access without sudo, then replug
-sudo make install-udev
-
-# 6. Listen to what the device volunteers on its interrupt endpoint
-./hd60s-probe --seconds 30
-
-# 7. Find which EP0 vendor requests are implemented (read-only, safe)
-./hd60s-probe --sweep --seconds 0
-
-# 8. Register access + the MCU handshake (the interesting part)
-./hd60s-reg                  # scan registers, reads only
-./hd60s-reg --handshake      # run the handshake, then rescan
-./hd60s-reg --reg 0x39       # read one register
+mpv --profile=low-latency --untimed av://v4l2:/dev/video2
 ```
+
+Play in the mpv window, let OBS do the recording.
+
+### Audio notes
+
+The device delivers 16-bit stereo PCM interleaved in the capture stream at an
+odd ~71.6 kHz, and the exact rate drifts a little between sessions.
+`obs-start.sh` plays it into a PipeWire null sink through ffmpeg's async
+resampler, which tracks the real arrival rate, so pitch and sync hold without
+tuning. If ffmpeg is missing it falls back to a fixed-rate `pacat` feed.
+
+## USB 3.0 is required
+
+The HD60 S must be on a **SuperSpeed** link. On a USB 2.0 link it falls back
+to a reduced personality whose isochronous endpoint tops out at 3072
+B/microframe = **197 Mbit/s**, against roughly 2000 Mbit/s for uncompressed
+1080p60. The bulk capture endpoints only exist at 5 Gbit/s.
+
+The device confirms this itself: its BOS descriptor reports
+`bFunctionalitySupport = SuperSpeed`, meaning full functionality is
+unavailable on a slower link. `hd60s-linkcheck.py` decodes that and warns
+loudly when the link is degraded.
+
+### If linkcheck says the SuperSpeed half is "not attached"
+
+That means the receptacle is wired for USB 3 and the USB 2 pairs are making
+contact, but the SuperSpeed pairs are not. Work through these in order; they
+are sorted by effort, not likelihood:
+
+1. **Flip the USB-C plug 180° at the device end.** USB-C carries two
+   SuperSpeed pair sets (TX1/RX1 and TX2/RX2); a C-to-A cable wires one, and
+   the device muxes to whichever the orientation selects. If one set of pins
+   in the device receptacle is bent, worn or dirty, flipping uses the other
+   set. Costs five seconds and fixes a genuinely common failure.
+2. **Move to a port that is holding a SuperSpeed link right now.** linkcheck
+   lists them. A port proven good this second beats a port labelled SS.
+3. **Put a known-good USB 3 device on the same cable and port.** If it trains
+   at 5000M, cable and port are cleared and the capture device's SuperSpeed
+   side is the fault.
+
+Note that a cable being sold as "USB 3.0", or having a coloured insert, says
+nothing about whether all four SuperSpeed conductors actually make contact.
+`not attached` is a measurement; the label is a claim.
+
+## How it works
+
+`hd60sd` is a libusb daemon. It runs the MCU handshake, brings up the HDMI
+receiver with a text bring-up script (`scripts/stream-cold.hd60s`), enables
+audio (`scripts/audio-block.hd60s`), then streams the bulk endpoint. Video
+lines and audio records are interleaved with per-record markers; the framer
+demuxes them, frames go to a v4l2loopback node paced by the device's own
+clock, and PCM goes down a FIFO to the PipeWire sink. Audio writes are
+non-blocking so a stalled consumer can never stall video.
+
+The full protocol, including how each fact was established, is in
+[docs/PROTOCOL.md](docs/PROTOCOL.md). The reverse-engineering trail, wrong
+turns included, is in [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md).
 
 ### The register protocol
 
@@ -85,60 +129,35 @@ The write puts its value in the **high byte of `wValue`** with no data stage,
 which is why blind sweeps never found it. Before the handshake only register
 `0x34` responds at all.
 
-## USB 3.0 is required
-
-The HD60 S must be on a **SuperSpeed** link. On a USB 2.0 link it falls back to
-a reduced personality whose isochronous endpoint tops out at 3072 B/microframe
-= **197 Mbit/s**, against roughly 2000 Mbit/s for uncompressed 1080p60. The
-bulk capture endpoints only exist at 5 Gbit/s.
-
-The device confirms this itself: its BOS descriptor reports
-`bFunctionalitySupport = SuperSpeed`, meaning full functionality is
-unavailable on a slower link. `hd60s-linkcheck.py` decodes that and warns
-loudly when the link is degraded.
-
-### If linkcheck says the SuperSpeed half is "not attached"
-
-That means the receptacle is wired for USB 3 and the USB 2 pairs are making
-contact, but the SuperSpeed pairs are not. Work through these in order — they
-are sorted by effort, not likelihood:
-
-1. **Flip the USB-C plug 180° at the device end.** USB-C carries two
-   SuperSpeed pair sets (TX1/RX1 and TX2/RX2); a C-to-A cable wires one, and
-   the device muxes to whichever the orientation selects. If one set of pins in
-   the device receptacle is bent, worn or dirty, flipping uses the other set.
-   Costs five seconds and fixes a genuinely common failure.
-2. **Move to a port that is holding a SuperSpeed link right now.** linkcheck
-   lists them. A port proven good this second beats a port labelled SS.
-3. **Put a known-good USB 3 device on the same cable and port.** If it trains
-   at 5000M, cable and port are cleared and the capture device's SuperSpeed
-   side is the fault.
-
-Note that a cable being sold as "USB 3.0", or having a coloured insert, says
-nothing about whether all four SuperSpeed conductors actually make contact.
-`not attached` is a measurement; the label is a claim.
-
-## The capture daemon
-
-`hd60sd` now drives the real device. The control plane works end to end; what
-is still missing is the receiver initialisation that makes video flow.
+## Poking at the hardware yourself
 
 ```bash
-# read-only probe: control plane + what the HDMI receiver sees
-./hd60sd --source device --script scripts/probe.hd60s --sink raw:/dev/null --seconds 1
+# 1. Is the link healthy? Start here; most problems are a USB 2.0 cable
+./tools/hd60s-linkcheck.py
 
-# try to capture (currently yields 0 bytes -- the receiver is not initialised)
-./hd60sd --source device --sink raw:/tmp/cap.bin --alt 2 --seconds 5
+# 2. Descriptor dump: no dependencies, no root
+./tools/hd60s-descdump.py
+
+# 3. Watch for (re)enumeration and snapshot each one
+./tools/hd60s-watch.sh
+
+# 4. Listen to what the device volunteers on its interrupt endpoint
+./hd60s-probe --seconds 30
+
+# 5. Find which EP0 vendor requests are implemented (read-only, safe)
+./hd60s-probe --sweep --seconds 0
+
+# 6. Register access + the MCU handshake (the interesting part)
+./hd60s-reg                  # scan registers, reads only
+./hd60s-reg --handshake      # run the handshake, then rescan
+./hd60s-reg --reg 0x39       # read one register
+
+# 7. Signal diagnosis in plain language
+./hd60sd --source device --script scripts/probe.hd60s --sink raw:/dev/null --seconds 1 --diagnose
 ```
 
-It opens the device, runs the MCU handshake, optionally executes a bring-up
-script, applies the vendor driver's own mode-detect test, then streams from
-endpoint 0x83 and reports packet and byte counts.
-
-### Bring-up scripts
-
-The receiver init is still being recovered from the vendor driver, so it lives
-in a text file rather than in the binary — iterating must not mean a rebuild.
+Bring-up sequences live in text files (`scripts/*.hd60s`), not in the binary,
+so iterating on the init never means a rebuild:
 
 ```
 fpga_write REG VAL                     FPGA/CPLD register file (bRequest 0xC1)
@@ -152,27 +171,9 @@ poll_mst   PAGE REG MASK WANT [TRIES]
 expect_mst PAGE REG MASK WANT
 ```
 
-## Using it with OBS
-
-```bash
-sudo apt install v4l2loopback-dkms v4l-utils    # once
-./scripts/obs-start.sh
-```
-
-Then in OBS: **Sources -> + -> Video Capture Device (V4L2)** and pick the
-`Elgato HD60 S` device. Restart OBS first if it was already running, so it
-rescans.
-
-Until the capture path works (see [docs/PROTOCOL.md](docs/PROTOCOL.md) 5.23) the
-feed shows a colour-coded status frame reporting what the receiver actually
-sees -- red for no signal, amber for a locked signal with no data yet, green
-once bytes flow -- along with the measured timing. That is considerably more
-useful than a black screen while the USB 3 link is being sorted out, and it
-turns into real video the moment the endpoint delivers.
-
 ## The synthetic path
 
-The output half is independently testable without hardware.
+The output half is testable without hardware:
 
 ```bash
 # synthetic colour bars into a file, then check with ffmpeg
@@ -182,35 +183,31 @@ ffmpeg -f rawvideo -pix_fmt yuyv422 -s 1280x720 -i /tmp/test.yuv -frames:v 1 /tm
 # straight into a v4l2loopback node, so OBS/ffmpeg/browsers see a camera
 sudo modprobe v4l2loopback
 ./hd60sd --source test --sink v4l2:/dev/video0
-
 ```
-
-Building it this way means that when the protocol does land, only the USB side
-is unproven -- the frame plumbing, pixel format and v4l2 path are already
-known good.
 
 ## Safety
 
-The device boots from unprotected SPI flash, so a stray vendor write can brick
-it. `hd60s-probe` is **strictly read-only** — every EP0 transfer it issues is
-device-to-host. Keep it that way.
+The device boots from unprotected SPI flash, so a stray vendor write can
+brick it. `hd60s-probe` is **strictly read-only**: every EP0 transfer it
+issues is device-to-host. Keep it that way. Do not write to the MCU or SPI
+flash, and read [docs/PROTOCOL.md](docs/PROTOCOL.md) section 10 before
+sending anything the scripts don't already send.
 
 ## Layout
 
 ```
-docs/     protocol + hardware notes, captured enumerations
-src/      shared code and (pending) daemon
-tools/    descriptor dump, enumeration watcher, RE probe
-udev/     device access rule
-kernel/   future native V4L2 module
+src/        the daemon (device, framer, sinks)
+scripts/    bring-up scripts + obs-start.sh
+tools/      link/descriptor diagnostics (python, no build needed)
+docs/       protocol, architecture, experiment log
+udev/       device permissions rule
+kernel/     notes toward an eventual kernel driver
 ```
 
-## Contributing a protocol capture
+## Credits
 
-The fastest way to unblock this is a `usbmon` trace of the official driver
-driving the device. If you can capture one, open an issue with the raw trace —
-that is the missing piece, not more code.
+Reverse engineered and written by Sean Elovirta
+([selodev3d](https://github.com/selodev3d)).
 
-## License
-
-GPL-2.0-only, so the protocol work can be reused by a future in-tree driver.
+Elgato and Game Capture are trademarks of their respective owners; this
+project is independent interoperability work.

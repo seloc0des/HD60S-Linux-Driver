@@ -1,10 +1,10 @@
-# Elgato Game Capture HD60 S — USB protocol notes
+# Elgato Game Capture HD60 S - USB protocol notes
 
 Living document. Everything here is tagged by how we know it:
 
-- **[OBSERVED]** — measured directly on hardware in this repo, reproducible.
-- **[TEARDOWN]** — from published hardware teardown, not verified by us.
-- **[UNKNOWN]** — not yet determined. Do not guess these in code.
+- **[OBSERVED]** - measured directly on hardware in this repo, reproducible.
+- **[TEARDOWN]** - from published hardware teardown, not verified by us.
+- **[UNKNOWN]** - not yet determined. Do not guess these in code.
 
 The device is **not** UVC. `bDeviceClass = 255` (vendor specific) on every
 interface, so no in-tree kernel driver will ever bind it.
@@ -43,7 +43,7 @@ which *did* need a host firmware push. Do not port that logic here.
 | Nuvoton **M031LD2AE** (Cortex-M0) | housekeeping MCU, peripherals + LED |
 | **MST3367** | HDMI receiver (HDMI → parallel video), I2C slave `0x9c` |
 | ITE **IT66121FN** | HDMI transmitter (passthrough out), I2C slave `0x9a` |
-| Altera **MAX II** CPLD | GPIO expander, I2C slave `0x98` — *not* a datapath controller, see 7.6 |
+| Altera **MAX II** CPLD | GPIO expander, I2C slave `0x98` - *not* a datapath controller, see 7.6 |
 | Winbond **W25Q32JV** 4 MB SPI flash | CYUSB3014 boot image + LED animation data @ `0x300000` |
 | ITE **IT1504** | 16-ch LED driver |
 
@@ -60,18 +60,18 @@ This is what the device presents when the SuperSpeed link fails to train.
 `wTotalLength = 73`, 2 interfaces, 1 configuration, bus powered @ 100 mA.
 
 ```
-Interface 0  (vendor specific)          — video/stream
-  alt 0 : EP 0x83 IN  Isochronous  wMaxPacketSize 0x0000  (0 B — idle/bandwidth-free)
+Interface 0  (vendor specific)          - video/stream
+  alt 0 : EP 0x83 IN  Isochronous  wMaxPacketSize 0x0000  (0 B - idle/bandwidth-free)
   alt 1 : EP 0x83 IN  Isochronous  wMaxPacketSize 0x0400  (1x1024 =  1024 B/µframe)
   alt 2 : EP 0x83 IN  Isochronous  wMaxPacketSize 0x1400  (3x1024 =  3072 B/µframe)
-Interface 1  (vendor specific)          — control/status
+Interface 1  (vendor specific)          - control/status
   alt 0 : EP 0x81 IN  Interrupt    wMaxPacketSize 0x0040  (64 B, bInterval 1)
 ```
 
 Note there is **no OUT endpoint at all** in this personality. Every host→device
 command must therefore travel over **EP0 control transfers**.
 
-### Bandwidth ceiling — why this mode cannot carry full-rate video
+### Bandwidth ceiling - why this mode cannot carry full-rate video
 
 Isochronous HS service is once per microframe (`bInterval 1`), 8000/s:
 
@@ -106,7 +106,7 @@ exchanged between two ports on the same controller:
 Both receptacles carry a genuine SuperSpeed link with another device and refuse
 to with the HD60 S. Host controller and ports are therefore cleared, leaving
 the cable or the device's own SuperSpeed pairs. Given several cables were tried
-with an identical signature — USB 2 half `configured`, SS half `not attached` —
+with an identical signature - USB 2 half `configured`, SS half `not attached`  - 
 the device's USB-C receptacle is the leading suspect.
 
 ### Captured at last: the SuperSpeed descriptor set [OBSERVED]
@@ -116,7 +116,7 @@ materially different from the USB 2.0 one:
 
 | Interface | Alt | Endpoint | Type | Notes |
 |---|---|---|---|---|
-| 0 | 0 | `0x83` | iso | 0 bytes — idle |
+| 0 | 0 | `0x83` | iso | 0 bytes - idle |
 | 0 | 1 | `0x83` | iso | 1x1024 |
 | 0 | 2 | `0x83` | iso | 1x1024 + SS companion |
 | 0 | 3 | `0x83` | iso | 1x1024 + SS companion, `wBytesPerInterval` 39936 |
@@ -124,7 +124,7 @@ materially different from the USB 2.0 one:
 | 1 | 0 | `0x81` | interrupt | 64 B, `bInterval` 7 |
 
 **Alt 4 is the real capture path.** The USB 2.0 personality has only alts 0-2,
-all isochronous — there is no bulk endpoint on High Speed at all. That is what
+all isochronous - there is no bulk endpoint on High Speed at all. That is what
 `bFunctionalitySupport = SuperSpeed` in the BOS descriptor means in practice.
 
 `hd60s_stream_start` now reads the descriptor to decide: if the selected alt's
@@ -164,8 +164,8 @@ Two things follow, and both are load-bearing for the driver design:
 
 ### Where the link actually fails [OBSERVED]
 
-A USB 3 receptacle is two logical ports — the USB 2 half and the SuperSpeed
-half — joined by a `peer` symlink in sysfs. On the port under test:
+A USB 3 receptacle is two logical ports - the USB 2 half and the SuperSpeed
+half - joined by a `peer` symlink in sysfs. On the port under test:
 
 ```
 usb3-port1  state=configured    peer=usb4-port1     <- HD60 S attaches here
@@ -176,7 +176,7 @@ usb4-port4  state=configured                        <- SS trains fine on this co
 So the receptacle is wired for USB 3, and the controller demonstrably trains
 SuperSpeed links on another of its ports. The USB 2 half configures while the
 SuperSpeed half never attaches, which localises the fault to the SS
-differential pairs — cable or connector, not the host controller and not the
+differential pairs - cable or connector, not the host controller and not the
 device's protocol stack.
 
 Expected once a SuperSpeed link trains, based on the CYUSB3014 design:
@@ -195,7 +195,7 @@ Until then the streaming layer must not be finalised.
 
 ## 5. Control protocol
 
-### 5.1 `bRequest 0xA0` — Cypress RAM read [OBSERVED]
+### 5.1 `bRequest 0xA0` - Cypress RAM read [OBSERVED]
 
 The shipping firmware still answers the **standard Cypress FX3 vendor RAM
 command**. This is not an Elgato command; it is the boot-loader interface the
@@ -210,7 +210,7 @@ wLength       bytes to read
 ```
 
 The half-ordering above is the FX3 boot loader convention and is inferred, not
-yet directly confirmed — see 5.2 for the evidence.
+yet directly confirmed - see 5.2 for the evidence.
 
 Confirmed by reading address `0x00000000` twice through two independent code
 paths (the EP0 sweep and `hd60s-dumpram`) and getting byte-identical results:
@@ -222,7 +222,7 @@ paths (the EP0 sweep and `hd60s-dumpram`) and getting byte-identical results:
 0030  9c ea 01 40 2c 30 00 40  6c f2 01 40 38 30 00 40
 ```
 
-That decodes as an **ARM32 exception vector table** — the CYUSB3014's I-TCM at
+That decodes as an **ARM32 exception vector table** - the CYUSB3014's I-TCM at
 address 0:
 
 | Offset | Word | Instruction | Vector |
@@ -237,17 +237,17 @@ address 0:
 | `0x1c` | `e59ff024` | `LDR PC, [PC, #0x24]` | FIQ |
 | `0x20` | `eafffffe` | `B .` | handler: spin |
 | `0x2c` | `e12fff1e` | `BX LR` | handler: return |
-| `0x30` | `0x4001ea9c` | — | branch target, SYSMEM |
-| `0x34` | `0x4000302c` | — | branch target, SYSMEM |
-| `0x38` | `0x4001f26c` | — | branch target, SYSMEM |
-| `0x3c` | `0x40003038` | — | branch target, SYSMEM |
+| `0x30` | `0x4001ea9c` | - | branch target, SYSMEM |
+| `0x34` | `0x4000302c` | - | branch target, SYSMEM |
+| `0x38` | `0x4001f26c` | - | branch target, SYSMEM |
+| `0x3c` | `0x40003038` | - | branch target, SYSMEM |
 
 The targets sit in `0x4000_0000`+, the FX3 SYSMEM window, which is where the
 running firmware lives.
 
 #### The read window is 255 bytes [OBSERVED]
 
-Addressing is genuinely byte-granular — a read at `0x84` returns exactly the
+Addressing is genuinely byte-granular - a read at `0x84` returns exactly the
 4-byte-shifted content of a read at `0x80`, so this is real memory indexing and
 not a canned buffer.
 
@@ -272,12 +272,12 @@ requests are refused whole rather than truncated. So `0xc0`+16 succeeds while
 
 Readable range is therefore `0x00`–`0xFE`, **255 bytes**. Byte `0xFF` exists but
 is unreachable: any transfer including it ends at `0x100` or beyond. That looks
-like an off-by-one in the bounds check — `addr + len < 0x100` rather than
+like an off-by-one in the bounds check - `addr + len < 0x100` rather than
 `<= 0x100`.
 
 > **Correction.** This was previously documented as 252 bytes with the bound at
 > `0xFC`. That came from probing on 4-byte alignment, where `0xfc`+4 ends at
-> `0x100` and stalls — the alignment hid the real boundary. Single-byte probes
+> `0x100` and stalls - the alignment hid the real boundary. Single-byte probes
 > show `0xfc`, `0xfd` and `0xfe` all read fine. `docs/captures/window-252.bin`
 > keeps its filename but holds the first 252 of those 255 bytes.
 
@@ -294,13 +294,13 @@ handler lives in SYSMEM at `0x4000_0000`+, far outside a 255-byte window.
 | `0x80`–`0xfe` | uninitialised SRAM (see below) |
 
 The trampoline targets are I-TCM offsets `0x113c`, `0x204`, `0x76c`, `0x158`,
-`0x11a8`, `0xfd8` — all inside the 16 KB I-TCM but outside the readable window.
+`0x11a8`, `0xfd8` - all inside the 16 KB I-TCM but outside the readable window.
 
 #### `0x80`–`0xfe` is uninitialised SRAM [OBSERVED]
 
 The block looks statistically random and is constant across repeated reads
 *within one power cycle*, so it is not a nonce, counter or RNG output. Across a
-power cycle it changes — but only slightly:
+power cycle it changes - but only slightly:
 
 | Measure | Value |
 |---|---|
@@ -315,7 +315,7 @@ percent is the signature of **uninitialised SRAM**: each cell has a
 manufacturing bias that dominates its power-on state, while a metastable
 minority flips run to run. This is the same effect SRAM PUFs exploit.
 
-So the region carries no secret and no identity — it is simply memory nobody
+So the region carries no secret and no identity - it is simply memory nobody
 wrote yet. Earlier `[UNKNOWN]` resolved.
 
 #### `0xA0` also accepts writes [OBSERVED]
@@ -350,7 +350,7 @@ Note the FX3 boot protocol treats a **zero-length** `0xA0` as "jump to the
 address in wValue/wIndex". `hd60s-writetest` refuses zero-length writes so this
 cannot happen by accident.
 
-### 5.2 A non-zero `wIndex` wedges EP0 [OBSERVED — HAZARD]
+### 5.2 A non-zero `wIndex` wedges EP0 [OBSERVED - HAZARD]
 
 Every read attempted so far falls into a clean pattern:
 
@@ -362,7 +362,7 @@ Every read attempted so far falls into a clean pattern:
 | `0x40000040` | `0x4000` | `0x0040` | **timeout** |
 
 Every success had `wIndex = 0`; every timeout had `wIndex != 0`. This is not an
-address-range boundary — the tool was sending the address halves **swapped**.
+address-range boundary - the tool was sending the address halves **swapped**.
 Under the FX3 convention `wIndex` is the *high* half, so asking for `0x40` was
 really asking for `0x0040_0000`: unmapped, no response, EP0 wedged.
 
@@ -370,7 +370,7 @@ It also explains the "`0x40000000` returns zeros" result: with the halves
 swapped that request actually fetched `0x0000_4000`, the end of the 16 KB
 I-TCM, which is plausibly zero-filled.
 
-[UNKNOWN] The corrected ordering is **not yet confirmed on hardware** — the
+[UNKNOWN] The corrected ordering is **not yet confirmed on hardware** - the
 device needs a physical replug between attempts and the test has not completed.
 The first thing to do next is read `0x40` with `wValue=0x40, wIndex=0`.
 
@@ -382,7 +382,7 @@ back; the device fell off the bus and needed a **physical replug** (it is bus
 powered, so unplugging power-cycles it).
 
 No writes have ever been issued to the device, so there is no risk to the flash
-image — a wedge costs a replug, not hardware.
+image - a wedge costs a replug, not hardware.
 
 `hd60s-dumpram` therefore **stops dead on the first timeout** rather than
 continuing (continuing is what escalated a stall into a bus dropout), paces
@@ -394,7 +394,7 @@ recovery without a replug.
 Devices shipping Windows drivers often expose a Microsoft OS String Descriptor
 at string index `0xEE`, which *names a vendor request code*. That would have
 handed us a vendor `bRequest` without any blind probing. The HD60 S does not
-have one — index `0xEE` stalls.
+have one - index `0xEE` stalls.
 
 The device exposes only three strings (`Elgato Systems`, `Game Capture HD60 S`,
 and the serial), so there is nothing to learn there either.
@@ -403,7 +403,7 @@ and the serial), so there is nothing to learn there either.
 full-speed personality: a single interface with the same iso EP 0x83 at
 0 / 64 / 128 bytes per frame, and no equivalent of interface 1. Nothing useful
 for capture, but it confirms the device's descriptor set is complete and
-conventional — the vendor protocol is not hidden in a nonstandard descriptor.
+conventional - the vendor protocol is not hidden in a nonstandard descriptor.
 
 #### Where the firmware could still come from
 
@@ -430,7 +430,7 @@ status value written over the front.
 
 > **Update.** These are not "not real commands", as this section previously
 > concluded. The vendor driver (5.9) uses `0xC1` for register access, `0xC2` on
-> one init path, and `0xC5`/`0xC6` for MCU access. They are real — they simply
+> one init path, and `0xC5`/`0xC6` for MCU access. They are real - they simply
 > do nothing useful when called with `wValue = 0`, which is all the sweep ever
 > tried. See 5.8 for why that made the whole command set invisible.
 
@@ -455,14 +455,14 @@ data whatsoever:
 | 2 | 3072 | 6.0 s | 40064 | 0 | **0** |
 
 Both alt settings are accepted, the host reserves the bandwidth, and packets are
-serviced at roughly the full microframe rate with **zero errors** — the endpoint
+serviced at roughly the full microframe rate with **zero errors** - the endpoint
 is healthy. The device simply returns zero-length packets.
 
 So video is not free-running: the stream must be **armed by a vendor command**
 before anything appears on EP 0x83. Combined with 5.5 (EP 0x81 equally silent),
 nothing at all happens on this device until the right control transfer is sent.
 
-Both `hd60s-isotest` runs left the device healthy — reads at address 0 still
+Both `hd60s-isotest` runs left the device healthy - reads at address 0 still
 work afterwards, and the tool restores alt 0 (the zero-bandwidth idle setting)
 on exit.
 
@@ -495,7 +495,7 @@ request codes, and described them as `URB_FUNCTION_CLASS_INTERFACE`
 The **codes are right**; the **transfer type is not**. Disassembling
 `SendVendorCommandRequest` (5.9) shows URB function `0x17` =
 `URB_FUNCTION_VENDOR_DEVICE`, i.e. `bmRequestType 0xC0`/`0x40`. Probing the
-class space on real hardware confirms it — 256 codes each at `0xA1`, `0xA0` and
+class space on real hardware confirms it - 256 codes each at `0xA1`, `0xA0` and
 `0xC2` all stall, as does bank `0x98` under every code above.
 
 #### The actual reason we missed it
@@ -503,7 +503,7 @@ class space on real hardware confirms it — 256 codes each at `0xA1`, `0xA0` an
 Our EP0 sweep used `bmRequestType 0xC0` and did try `bRequest 0xC1`. Both were
 correct. It failed on one parameter: **`wValue = 0`**.
 
-`wValue` is the register selector, so `wValue = 0` asks for register `0x00` —
+`wValue` is the register selector, so `wValue = 0` asks for register `0x00`  - 
 which does not exist. Measured:
 
 | Request | Result |
@@ -513,7 +513,7 @@ which does not exist. Measured:
 | `0xC1`, `wValue 0x34`, wLength 1 | `0x01` |
 | `0xC1`, `wValue 0x34`, wLength 64 | `0x01` (64 bytes returned) |
 
-`wLength` is irrelevant — the device happily returns 64 bytes. Before the
+`wLength` is irrelevant - the device happily returns 64 bytes. Before the
 handshake **only register `0x34` answers at all**, so a sweep had a 1-in-256
 chance of stumbling on it even with the right request code.
 
@@ -525,7 +525,7 @@ explores a line through the space, not the space. Where a device multiplexes a
 register file through `wValue`, zero is very likely the one value that is not a
 register.
 
-### 5.9 Register protocol and the MCU handshake [OBSERVED — CONFIRMED ON HARDWARE]
+### 5.9 Register protocol and the MCU handshake [OBSERVED - CONFIRMED ON HARDWARE]
 
 Recovered by disassembling the vendor Windows driver, then **verified on the
 real device**. See `docs/VENDOR-DRIVER.md` for how the driver was obtained and
@@ -538,11 +538,11 @@ USHORT wIndex, PVOID buf, ULONG len, UCHAR dir)` builds a `0x88`-byte URB with
 function `0x17` = **`URB_FUNCTION_VENDOR_DEVICE`**, placing `bRequest` at URB
 offset `0x81`, `wValue` at `0x82`, `wIndex` at `0x84`.
 
-So these are **vendor / device-recipient** transfers — `bmRequestType 0xC0`
+So these are **vendor / device-recipient** transfers - `bmRequestType 0xC0`
 (IN) and `0x40` (OUT). Earlier notes in this file, following third-party
 analysis, called them class-interface; that was wrong.
 
-#### Register access — `bRequest 0xC1`
+#### Register access - `bRequest 0xC1`
 
 From the two thunks at `.text 0x62c00` (write) and `0x62c40` (read):
 
@@ -588,7 +588,7 @@ gate every earlier probe ran into (5.8), and it is now open.
 
 **This is the vendor's intended path for our device.** An earlier revision of
 this document claimed the handshake was gated on PID `0x0076` only. That was
-wrong — it came from reading the *first* of two call sites.
+wrong - it came from reading the *first* of two call sites.
 
 `CY3014_HwInitialize` calls `CheckIsMCUExist` twice. The second call (VMA
 `0x6fde2`) is reached through a switch on `(idProduct & 0xfff)`:
@@ -613,10 +613,10 @@ before the MCU check:
 
 | bRequest | Dir | Len | Notes |
 |---|---|---|---|
-| `0xC2` | IN | 1 | only when `(idProduct & 0xfff) == 0x531` — not this device |
+| `0xC2` | IN | 1 | only when `(idProduct & 0xfff) == 0x531` - not this device |
 | `0xEC` | OUT | 10 | payload begins `b8 22 .. .. .. c0 .. 00 .. ca`; issued on the path our device takes |
 
-The `0xEC` payload is only partially recovered — several bytes of the 10-byte
+The `0xEC` payload is only partially recovered - several bytes of the 10-byte
 buffer are not written in the visible basic block. [UNKNOWN]
 
 #### The full command surface [OBSERVED]
@@ -626,16 +626,16 @@ driver and recovers whichever arguments are constants. 273 call sites:
 
 | bRequest | Sites | Role (from the symbols at each site) |
 |---|---|---|
-| `0xC0` | 214 | **I2C bridge** — `Get/SetSlaveDeviceRegister`, `SlaveDeviceBytes`. `wValue` = slave address, `wIndex` = register |
-| `0xC1` | 33 | **FPGA/CPLD registers** — `Get/SetFpgaRegister`, `GSPI_*` |
+| `0xC0` | 214 | **I2C bridge** - `Get/SetSlaveDeviceRegister`, `SlaveDeviceBytes`. `wValue` = slave address, `wIndex` = register |
+| `0xC1` | 33 | **FPGA/CPLD registers** - `Get/SetFpgaRegister`, `GSPI_*` |
 | `0xC3` | 14 | GSPI word transfers |
 | `0xC2` | 2 | init path, `CY3014_HwInitialize` |
 | `0xC5` | 2 | MCU access, `CY3014_MCU_Exist` / `HwInitialize` |
-| `0xA0` | 2 | EZ-USB data — the 255-byte window in 5.1 |
+| `0xA0` | 2 | EZ-USB data - the 255-byte window in 5.1 |
 
 This refines 5.9: `0xC1` is not the general register interface, it is
 specifically the FPGA/CPLD register file. The workhorse is `0xC0`, the I2C
-bridge to the peripheral chips — the HDMI receiver, transmitter and clock
+bridge to the peripheral chips - the HDMI receiver, transmitter and clock
 generator all hang off it.
 
 `CY3014_GetSlaveDeviceRegister` (VMA `0x62ba0`) confirms the mapping:
@@ -648,7 +648,7 @@ mov   DWORD [rsp+0x28], 1   ; one byte
 mov   BYTE  [rsp+0x30], 1   ; IN
 ```
 
-#### `EnableMCU` — the same shape, one bit different [OBSERVED]
+#### `EnableMCU` - the same shape, one bit different [OBSERVED]
 
 `EnableMCU()` (VMA `0x1a590`) is nearly identical to the handshake:
 
@@ -666,13 +666,13 @@ read reflects the low bit of what was written.
 #### The I2C bridge answers, but nothing is behind it yet [OBSERVED]
 
 Reading register `0x00` from every even slave address `0x00`–`0xFE`, after the
-handshake, returns **`0x33` every time** — and reading registers `0x00`–`0x0F`
+handshake, returns **`0x33` every time** - and reading registers `0x00`–`0x0F`
 from candidate HDMI addresses (`0x90`, `0x92`, `0x98`, `0x9A`, `0xB0`) also
 returns `0x33` for all of them.
 
 A successful control transfer here only means the *bridge* accepted the request;
 it is not an I2C ACK. A constant reply across every address and register means
-no peripheral is actually answering — the chips are presumably unpowered or the
+no peripheral is actually answering - the chips are presumably unpowered or the
 I2C master is not enabled yet.
 
 Running the handshake and `EnableMCU` first does **not** wake it, and the
@@ -685,7 +685,7 @@ readings are **not reproducible**:
 | 1158 reads of slave `0x90` over 3 s after `EnableMCU` | `0x33` throughout, never `0x01` |
 | 9 fixed addresses read forward then backward | `0x33` every time, both orders |
 
-The `0x01` block is therefore neither address-dependent nor time-dependent — it
+The `0x01` block is therefore neither address-dependent nor time-dependent - it
 is not a property of any I2C device. The most economical explanation is the
 stale-EP0-buffer behaviour already documented in 5.4: the handshake's final poll
 of register `0x39` returns `0x01` and leaves it in the buffer, and subsequent
@@ -694,7 +694,7 @@ reads echo it until something displaces it.
 **Conclusion: the `0xC0` bridge is not returning I2C data at all on this device
 in this state.** Do not read anything into the byte values.
 
-**And the scan was probing the wrong half of the command.** See 5.10 — `0xC0`
+**And the scan was probing the wrong half of the command.** See 5.10 - `0xC0`
 serves two interfaces selected by `wValue`, and the useful one is `0x50xx`.
 
 [UNKNOWN] What actually brings the peripherals up. Candidates from the symbol
@@ -704,14 +704,14 @@ table, none yet transcribed: `CY3014_PowerDownPeripherals` and its inverse, and
 `./hd60s-reg --i2c-scan` reports the uniform-reply case explicitly rather than
 printing 128 false positives.
 
-### 5.10 The MCU proxy — talking to the Nuvoton [OBSERVED — CONFIRMED ON HARDWARE]
+### 5.10 The MCU proxy - talking to the Nuvoton [OBSERVED - CONFIRMED ON HARDWARE]
 
 `bRequest 0xC0` is **two interfaces**, selected by the range of `wValue`:
 
 | `wValue` | Interface |
 |---|---|
-| `< 0x100` | direct I2C — slave address in `wValue`, register in `wIndex` |
-| `0x50xx` | **MCU proxy** — tunnels a packet to the Nuvoton housekeeping MCU |
+| `< 0x100` | direct I2C - slave address in `wValue`, register in `wIndex` |
+| `0x50xx` | **MCU proxy** - tunnels a packet to the Nuvoton housekeeping MCU |
 
 Both transports do `or di, 0x5000` on a command byte (VMA `0x627f0` for write,
 `0x62880` for read):
@@ -728,7 +728,7 @@ did not publish.
 
 `0xAB` preamble, a length byte, then the command bytes.
 
-#### `GetMCUROMVersion` — worked end to end
+#### `GetMCUROMVersion` - worked end to end
 
 From VMA `0x1c240`:
 
@@ -738,7 +738,7 @@ delay  150 ms
 read   wValue 0x5066 -> 3 bytes
 ```
 
-**Result on hardware: `51 10 27`** — byte-for-byte what the vendor driver
+**Result on hardware: `51 10 27`** - byte-for-byte what the vendor driver
 compares against (`cmp bl,0x51` / `cmp bpl,0x10` / `cmp sil,0x27`). Repeatable
 across runs.
 
@@ -768,7 +768,7 @@ Two things follow:
 The first exchange after the handshake sometimes returns the idle pattern, so
 `hd60s-reg --mcu-version` retries.
 
-#### Hazards — do not invoke
+#### Hazards - do not invoke
 
 Two MCU functions in the driver are genuine brick risks and are **deliberately
 not implemented** here:
@@ -780,7 +780,7 @@ not implemented** here:
 
 `CommandMCUReset` (`0x19e50`) is milder but still resets the MCU.
 
-### 5.11 I2C through the MCU — the peripherals are reachable [OBSERVED — CONFIRMED ON HARDWARE]
+### 5.11 I2C through the MCU - the peripherals are reachable [OBSERVED - CONFIRMED ON HARDWARE]
 
 `i2c_access()` (VMA `0x19ca0`) assembles a packet whose **first byte becomes the
 MCU command**:
@@ -809,7 +809,7 @@ bus):
 |---|---|---|
 | `0x94` | `0x00` | regs read `00 d9 00 a0 0e 00 a0 00 60 42` |
 | `0x98` | `0x1d` | regs read `1d 02 00 …` |
-| **`0x9a`** | `0x54` | **ITE chip** — see below |
+| **`0x9a`** | `0x54` | **ITE chip** - see below |
 | `0x9c` | `0x02` | regs read `02 61 f5 02 01 00 08 04 03 28` |
 | `0xa4` | `0x09` | |
 | `0xaa` | `0x33` | |
@@ -819,8 +819,8 @@ Slave `0x9a` registers `0x00`–`0x03` read **`54 49 12 16`**:
 
 | Reg | Value | Meaning |
 |---|---|---|
-| `0x00`–`0x01` | `0x4954` | vendor ID — **ITE Tech** (ASCII `"IT"`) |
-| `0x02`–`0x03` | `0x1612` | device ID — **IT6612**, matching the driver's `CIT6612` class |
+| `0x00`–`0x01` | `0x4954` | vendor ID - **ITE Tech** (ASCII `"IT"`) |
+| `0x02`–`0x03` | `0x1612` | device ID - **IT6612**, matching the driver's `CIT6612` class |
 
 That is an independently verifiable identification: a chip ID read over a
 protocol we reconstructed, agreeing with both the driver's class name and the
@@ -830,7 +830,7 @@ published teardown.
 
 > **Supersedes the direct-I2C attempt.** Section 5.9 records a scan using
 > `bRequest 0xC0` with `wValue < 0x100`, which returned a constant `0x33` at
-> every address. That form is not real I2C on this device — the working path is
+> every address. That form is not real I2C on this device - the working path is
 > the MCU proxy above. The earlier scan was probing the wrong half of `0xC0`.
 
 ### 5.12 The peripheral chips [OBSERVED]
@@ -843,7 +843,7 @@ Every `i2c_access` call site in the driver, with the slave constant recovered:
 | `0x88` | firmware register scanner | `CY3014_CtrlFirmwareRegisterScanner` |
 | `0x94` | CS53L21 audio codec | `CY3014_CS53L21_*` |
 | `0x98` | **CPLD** | `CY3014_CPLD_LoadGPIO / SaveGPIO / SetGPIO` |
-| `0x9a` | **IT6612 HDMI transmitter** (passthrough) | `CY3014_ITE6612_*` — ID verified `54 49 12 16` |
+| `0x9a` | **IT6612 HDMI transmitter** (passthrough) | `CY3014_ITE6612_*` - ID verified `54 49 12 16` |
 | `0x9c` | **MST3367 HDMI receiver** | `CY3014_MST3367_*` |
 | `0xaa` | firmware register poll | `CY3014_PollFirmwareRegisterScanner` |
 
@@ -860,7 +860,7 @@ i2c_write(0x9c, reg,  value)    ; then the target register
 ```
 
 That helper branches on the MCU-present flag (`[dev+0x63f0]`, set by
-`CheckIsMCUExist`). With the MCU up — our case — it goes through `i2c_access`;
+`CheckIsMCUExist`). With the MCU up - our case - it goes through `i2c_access`;
 without it, it falls back to the direct `wValue = 0x9c` form. So the handshake
 is a prerequisite for touching the receiver at all.
 
@@ -876,7 +876,7 @@ is a prerequisite for touching the receiver at all.
 #### Receiver init is a flat register list
 
 `MST3367_HwInitialize` (VMA `0x427b0`) is a run of `(page, reg, value)` writes
-through `0x65080` — no table, just straight-line code with branches on device
+through `0x65080` - no table, just straight-line code with branches on device
 variant. `tools/mst3367-init.py` extracts it: **73 writes, 56 fully literal**,
 the rest computed at runtime and reported as `??` rather than guessed.
 
@@ -904,7 +904,7 @@ receiver. The control flow has to be resolved first.
 #### Resolving the branch conditions [OBSERVED]
 
 Both fields are set in `CDevice::OnDeviceStart` from the **Windows registry**,
-each with a code default used when the value is absent — which is the normal
+each with a code default used when the value is absent - which is the normal
 case on a stock install:
 
 | Field | Registry value | Default | Set at |
@@ -942,7 +942,7 @@ conditions not yet traced.
 `(reg55 & 0x3c) == 0x3c`.
 
 On this device with a live HDMI source connected, `reg 0x55` reads `0x01`, so
-that test fails — **the receiver reports no detected mode**, which is expected
+that test fails - **the receiver reports no detected mode**, which is expected
 while it remains uninitialised. Register content does change when a source is
 connected (page `0x01`: `0x28`/`0x29` go `06 00` -> `ce 07`, and `0x0e`/`0x0f`,
 `0x10`, `0x34` change), so the chip is seeing *something*; it is just not locked.
@@ -950,10 +950,10 @@ connected (page `0x01`: `0x28`/`0x29` go `06 00` -> `ce 07`, and `0x0e`/`0x0f`,
 [UNKNOWN] Signal detection therefore depends on completing the receiver init,
 which depends on resolving the branch conditions above.
 
-### 5.13 MST3367 addressing — a correction [OBSERVED]
+### 5.13 MST3367 addressing - a correction [OBSERVED]
 
 Slave `0x9c` is one of `i2c_access`'s **special** slaves (`0x88`, `0x98`,
-`0x9c`). Those take the slave value as the MCU command — `wValue = 0x509c` —
+`0x9c`). Those take the slave value as the MCU command - `wValue = 0x509c`  - 
 with a raw payload, **not** the generic command-`0x66` form used for every
 other slave.
 
@@ -962,7 +962,7 @@ was wrong, and wrong in the worst way: the generic form is *accepted* and
 returns plausible-looking data, but the page select does not take, so every read
 comes from whatever window happened to be active.
 
-Proof — regs `0x14`–`0x1b` after each page-select attempt:
+Proof - regs `0x14`–`0x1b` after each page-select attempt:
 
 | Page select | `14 15 16 17 18 19 1a 1b` |
 |---|---|
@@ -986,19 +986,19 @@ register read : wValue 0x5066, payload { 0x9d, 0x01, reg }  then read 1 byte
 Everything read from the MST3367 before this fix should be treated as
 unreliable.
 
-### 5.14 Hot-plug detect and EDID [OBSERVED — CONFIRMED ON HARDWARE]
+### 5.14 Hot-plug detect and EDID [OBSERVED - CONFIRMED ON HARDWARE]
 
 HPD toward the source is **page 0 register `0xB7` bit 1**, from
 `MST3367_TMDS_HOT_PLUG` (VMA `0x18ab0`), which routes `0fd9:005e` straight to a
 read-modify-write of that bit.
 
 With correct addressing the bit sets and holds (`0x00` -> `0x02`). With the old
-broken addressing it silently refused — a good example of why the correction
+broken addressing it silently refused - a good example of why the correction
 above mattered.
 
 **Asserting HPD gates the DDC path.** Before HPD, an I2C scan finds seven
-devices and nothing at `0xa0`. After HPD, slave `0xa0` — the standard DDC/EDID
-address — appears, and reads back a valid 128-byte EDID:
+devices and nothing at `0xa0`. After HPD, slave `0xa0` - the standard DDC/EDID
+address - appears, and reads back a valid 128-byte EDID:
 
 ```
 00: 00 ff ff ff ff ff ff 00 14 e1 01 00 00 00 00 00
@@ -1010,7 +1010,7 @@ address — appears, and reads back a valid 128-byte EDID:
 
 | Field | Value |
 |---|---|
-| header | `00 FF FF FF FF FF FF 00` — valid |
+| header | `00 FF FF FF FF FF FF 00` - valid |
 | checksum | correct |
 | manufacturer | `EGA` (Elgato) |
 | product | `0x0001` |
@@ -1019,17 +1019,17 @@ address — appears, and reads back a valid 128-byte EDID:
 
 So the device holds its own EDID and serves it over DDC once HPD is asserted; a
 Linux driver does not need to supply one. This also confirms the earlier trace
-finding that `CY3014_SetStartTechEDID` is dead code here — it is gated on YUAN
+finding that `CY3014_SetStartTechEDID` is dead code here - it is gated on YUAN
 VID `0x1164` and never runs for `0fd9:005e`.
 
 `hd60sd --source device` now asserts HPD and validates the EDID on start.
 
 [UNKNOWN] Even with HPD asserted and a valid EDID served, the source is still
-not transmitting — mode-detect register `0x55` reads `0x03` (the driver's test
+not transmitting - mode-detect register `0x55` reads `0x03` (the driver's test
 wants `(v & 0x3c) == 0x3c`) and H-total reads 0. So something beyond
 sink-presentation is still required.
 
-### 5.15 Receiver lock — horizontal achieved, vertical not [OBSERVED]
+### 5.15 Receiver lock - horizontal achieved, vertical not [OBSERVED]
 
 `scripts/hdmi-lock.hd60s` transcribes the page-2 front-end steps of
 `MST3367_HDMI_INIT` (VMA `0x18c40`) with the canonical HPD-drop/re-lock
@@ -1053,7 +1053,7 @@ consistent with `0x55` never reaching `0x3c`.
 
 `MST3367_HDMI_INIT` ends with writes to page `0x80` registers `0xCE`, `0xCF`,
 `0xD0`. Those live on page `0x80` because step `0x18d2c` sets bit 7 of the page
-register first — writing them on page `0x00` is a silent no-op, which is what
+register first - writing them on page `0x00` is a silent no-op, which is what
 happened on the first attempt.
 
 Applying them correctly *degraded* the lock: H total went from a stable 2200 to
@@ -1068,13 +1068,13 @@ deliberately omits them; `scripts/hdmi-init.hd60s` keeps the full sequence for
 comparison.
 
 [UNKNOWN] What completes vertical lock. Endpoint `0x83` remains silent
-throughout — no bytes in ~47000 isochronous packets.
+throughout - no bytes in ~47000 isochronous packets.
 
 ### 5.16 CPLD access and the firmware scanner [OBSERVED]
 
 The CPLD (Altera MAX II, slave `0x98`) is another special slave: writes go out
 as `wValue 0x5098` with a raw `{reg, val}` payload. `CY3014_SetFpgaRegister` /
-`GetFpgaRegister` are its byte accessors — misleadingly named, since they are
+`GetFpgaRegister` are its byte accessors - misleadingly named, since they are
 *not* the FX3's `bRequest 0xC1` register file.
 
 Register map from `CY3014_HwReset`:
@@ -1085,13 +1085,13 @@ Register map from `CY3014_HwReset`:
 | `0x20` | mode | `0x05` | yes |
 | `0x00` | GPIO data port 0 | `0x01` | **no** (reads `0x1d`) |
 | `0x10` | GPIO direction port 0 (0 = output) | `0xFE` | yes |
-| `0x01` | GPIO data port 1 — HDMI hot-plug/enable lines | `\|= 0x03` | partly |
+| `0x01` | GPIO data port 1 - HDMI hot-plug/enable lines | `\|= 0x03` | partly |
 | `0x11` | GPIO direction port 1 | `0xFC` | yes |
 
 For PID `0x005e` the FX3 `bRequest 0xC1` reg `0x2D` reset block at the head of
 `HwReset` is skipped entirely, so a Linux driver must not replay it.
 
-#### Firmware capability probes — trace confirmed on hardware
+#### Firmware capability probes - trace confirmed on hardware
 
 `CY3014_HwInitialize` probes the FX3's capability bitmask, and the trace found
 that for PID `0x5e` the `0xC5` probe is deliberately skipped. Tested directly:
@@ -1103,7 +1103,7 @@ that for PID `0x5e` the `0xC5` probe is deliberately skipped. Tested directly:
 | `0xC6` wValue `0x0000` | accepted |
 
 `0xC5` stalling and `0xC6` working is exactly what the disassembly predicts for
-this PID — an independent confirmation of the trace.
+this PID - an independent confirmation of the trace.
 
 A 56-byte scan table (14 four-byte `{reg, tag, mask, aux}` descriptors, per
 `CY3014_FillScanRegisters`) uploads successfully with `bRequest 0xC6`,
@@ -1119,17 +1119,17 @@ Both data endpoints are completely silent while the entire control plane works:
 | Path | Status |
 |---|---|
 | EP0 control (registers, MCU, I2C, EDID) | fully working |
-| Interrupt EP `0x81` | 0 packets, ever — including with the scanner enabled |
+| Interrupt EP `0x81` | 0 packets, ever - including with the scanner enabled |
 | Isochronous EP `0x83` | ~60000 packets serviced, **0 bytes**, 0 errors |
 
-That combination — control plane perfect, both data endpoints mute — is what a
+That combination - control plane perfect, both data endpoints mute - is what a
 device looks like when its firmware has not started its DMA channels.
 
 The device itself states the constraint: its BOS descriptor reports
 `bFunctionalitySupport = SuperSpeed` (5.9), i.e. full functionality is
 unavailable below 5 Gbit/s. The USB 2.0 personality reserves iso bandwidth of
 3072 B/microframe = 197 Mbit/s against roughly 2000 Mbit/s for uncompressed
-1080p60 — a tenth of what is needed.
+1080p60 - a tenth of what is needed.
 
 [UNKNOWN] Whether the FX3 firmware refuses to start streaming on a High Speed
 link, or whether some further configuration would start it anyway. This cannot
@@ -1141,12 +1141,12 @@ be settled from this host until the SuperSpeed link trains.
 
 This document previously named it as the main obstacle. That was wrong. Its real
 bounds are `0x43d20`–`0x49119` (one `.pdata` entry), and it dispatches on
-`[CDevice+0x7104]` — the registry DWORD `AnalogCrossbarVideoInputProperty`,
+`[CDevice+0x7104]` - the registry DWORD `AnalogCrossbarVideoInputProperty`,
 which the HD60 S INF sets to 0. Values 2/3 take the analog arm at `0x43d8c`;
 0/1 take the HDMI arm at `0x47075`.
 
 **101 of its 109 paged writes are below `0x4705e` and unreachable on the HDMI
-arm.** That arm issues at most 5 writes and programs no timing at all — the
+arm.** That arm issues at most 5 writes and programs no timing at all - the
 1080p60 geometry comes from immediates (`0x780`, `0x438`) after matching the
 measured H active. So there is nothing there to transcribe.
 
@@ -1163,7 +1163,7 @@ scaled = 130,039,999 > T, and not SuperSpeed  ->  alt 2
 ```
 
 Tier 3 is gated behind the SuperSpeed flag at `0x6e797`. So on a High Speed
-link the driver selects **alt 2** and proceeds — it does not refuse to stream.
+link the driver selects **alt 2** and proceeds - it does not refuse to stream.
 Our descriptor dump confirms alts 0/1/2 are all that exist, and `wTotalLength`
 = 73 ≤ 0x70 means the bulk/quirk path at `0x6e8e6` is never entered.
 
@@ -1174,7 +1174,7 @@ which named it as the prime suspect for the silent endpoints.
 
 The receiver's no-signal path writes `0xFF` to both (`0x1940c`, `0x1941c`); the
 success path writes `0x00` to both, in that order, as its **final** action
-(`0x48d61` then `0x48d71`) — after the interface is already on its streaming
+(`0x48d61` then `0x48d71`) - after the interface is already on its streaming
 alt. `hd60sd --post-script` now runs the un-mute after SET_INTERFACE.
 
 #### Active-window measurement engine
@@ -1193,7 +1193,7 @@ mst_write(0,0xE2,0x00)                       # disarm
 ```
 
 **Measured on hardware: all of `0xF3`–`0xFA` read `0x00`, giving a 0 x 1
-window.** With V total also 0, that means no DE and no vertical sync — there is
+window.** With V total also 0, that means no DE and no vertical sync - there is
 no valid signal arriving. Earlier in the same session the same registers gave a
 clean 2200 x 1125, so the source stopped transmitting between the two
 measurements, most likely after repeated HPD cycling.
@@ -1204,7 +1204,7 @@ depend on the `0x55` gate whose bit semantics are still unknown.
 ### 5.19 The vertical-lock wall [OBSERVED]
 
 With a live Nintendo Switch at 1080p60 and the full reconstructed bring-up
-applied — including the corrections below — the receiver reaches a stable,
+applied - including the corrections below - the receiver reaches a stable,
 reproducible, *partial* lock:
 
 | Measurement | Value | Verdict |
@@ -1215,7 +1215,7 @@ reproducible, *partial* lock:
 | active-window engine | `0 x 1` | **no DE** |
 | p0 `0x14` | `0x00` | independent sync-status byte: nothing |
 | p0 `0x55` | `0x02` | gate wants `(v & 0x3C) == 0x3C` |
-| p2 `0x0E` | `0x00` | stream-open handshake waits for `& 0x07` — times out |
+| p2 `0x0E` | `0x00` | stream-open handshake waits for `& 0x07` - times out |
 | ep `0x83` | 0 bytes / ~63000 packets | silent |
 
 Horizontal timing is measured *exactly* right, so the front end is locked to the
@@ -1224,35 +1224,35 @@ pixel clock and line rate. Vertical sync and data-enable are entirely absent.
 #### Ruled out
 
 - **`p0 0x0E` bit 3** would make `0x5b`/`0x5c` report sync *width* rather than V
-  total. Measured `0x40` — bit clear. Not the cause.
+  total. Measured `0x40` - bit clear. Not the cause.
 - **`p0 0x54` bit 4** is clear (`0x20`), which is correct.
-- **`MST3367_VideoFormatDetection`** — 101 of its 109 writes are unreachable on
+- **`MST3367_VideoFormatDetection`** - 101 of its 109 writes are unreachable on
   the HDMI arm (5.18).
-- **The USB 2.0 link** — the tier arithmetic selects alt 2 and proceeds (5.18).
+- **The USB 2.0 link** - the tier arithmetic selects alt 2 and proceeds (5.18).
 
 #### A structural bug this exposed
 
-`MST3367_HDMI_INIT` step 7 is a read-modify-write of register `0x00` — the
-**page register itself** — setting bit 7, and that bit must stay set across the
+`MST3367_HDMI_INIT` step 7 is a read-modify-write of register `0x00` - the
+**page register itself** - setting bit 7, and that bit must stay set across the
 following `0xCE`/`0xCF` writes (`0x18D11`–`0x18D8E`).
 
 `hd60s_mst_write(page, reg, val)` re-selects the page before every access, so it
 *destroys the hold* and can never reproduce this. `hd60s_mst_raw_write/read` and
 the `mst_raw` / `mst_rawrmw` script ops exist for exactly this case. Fixing it
-made the sequence execute correctly — but did not change the lock state.
+made the sequence execute correctly - but did not change the lock state.
 
 #### What is genuinely still unknown
 
 The decode passes were explicit about their own limits, and these are the gaps:
 
-- **The bit semantics of `p0 0x55`.** Not derivable from the binary — the driver
+- **The bit semantics of `p0 0x55`.** Not derivable from the binary - the driver
   only ever tests `& 0x3C`, never assigns meaning to individual bits.
 - **`bRequest 0xC2`.** A zero-length OUT issued unconditionally with its result
   discarded; no other driver in the package uses it and the PDB has no name for
   it. Semantics undeterminable from this image.
 - **The `0xEC` 10-byte payload.** `B8 22 ?? ?? ?? C0 ?? 00 ?? CA`, with five
   bytes left as uninitialised stack by the vendor driver. Structure unknown.
-- **The EDID upload inside `CY3014_SetStartTechEDID`** — payloads assembled at
+- **The EDID upload inside `CY3014_SetStartTechEDID`** - payloads assembled at
   runtime, not decoded. Judged not to be the blocker since the source does
   transmit, but it is a real gap in the replay.
 
@@ -1284,7 +1284,7 @@ removed. Neither our scripts nor the bring-up writes `0x6a`/`0x6b` or
 1080p60 constants.
 
 They did change earlier in the session (`06 00` -> `ce 07`, and once `2020/1740`),
-so they are not immutable — but they do not track the source, and they are not
+so they are not immutable - but they do not track the source, and they are not
 evidence of lock.
 
 **Corrected status: the receiver shows no evidence of ever having locked.** Every
@@ -1300,7 +1300,7 @@ independent indicator agrees and always has:
 | `p0 0x01` bit 2 (HDMI mode) | clear |
 | ep `0x83` | 0 bytes |
 
-The earlier reading — "partial lock, horizontal good, vertical missing" — was
+The earlier reading - "partial lock, horizontal good, vertical missing" - was
 wrong. There is no partial lock. There is no lock.
 
 #### What this rules out
@@ -1311,7 +1311,7 @@ nothing is the ordinary case of "no signal reaching the front end". The question
 is not *why does vertical fail* but *why does nothing arrive*.
 
 [UNKNOWN] Whether the source ever transmits into this device. We have never had
-an independent confirmation — no display was ever connected to the passthrough
+an independent confirmation - no display was ever connected to the passthrough
 output, so every judgement about the source has come through the same
 uninitialised receiver we are trying to debug.
 
@@ -1322,7 +1322,7 @@ asserted for 3 s versus de-asserted for 3 s. Exactly three registers differ:
 
 | Register | HPD high | HPD low | Note |
 |---|---|---|---|
-| `p0 0xb7` | `0x02` | `0x00` | the bit we write — expected |
+| `p0 0xb7` | `0x02` | `0x00` | the bit we write - expected |
 | `p2 0x0e` | `0x10` | `0x00` | the stream-open handshake register |
 | `p2 0x0f` | `0x15` | `0x00` | |
 
@@ -1333,15 +1333,15 @@ written by us and they track the HPD state, so the receiver observes the change.
 That validates the whole control chain end to end: USB -> MCU proxy -> I2C ->
 MST3367 -> a physical line the front end can see.
 
-**But no TMDS ever arrives.** `p2 0x0e` reads `0x10` — bit 4 set, bits 0-2
+**But no TMDS ever arrives.** `p2 0x0e` reads `0x10` - bit 4 set, bits 0-2
 clear, and the driver's stream-open handshake (`0x6E452`-`0x6E474`) waits for
 `(p2 0x0e & 0x07) != 0`. Not one timing, sync or status register outside those
 three moves. If a source were transmitting, HPD removal would collapse the clock
 and something would change; nothing does.
 
 Combined with 5.20 (the H values are static, not measurements), the conclusion is
-that **the front end never receives a signal**, and our HPD assertion — while
-electrically effective at the register level — does not result in the source
+that **the front end never receives a signal**, and our HPD assertion - while
+electrically effective at the register level - does not result in the source
 transmitting.
 
 [UNKNOWN] Whether the cause is upstream (the source never starts) or at the
@@ -1354,7 +1354,7 @@ passthrough output. If it shows the source, the source transmits and the fault
 is in our configuration. If it shows nothing, the source is not transmitting and
 no register sequence will change that.
 
-### 5.22 HPD is ACTIVE LOW — receiver now locks [OBSERVED — CONFIRMED]
+### 5.22 HPD is ACTIVE LOW - receiver now locks [OBSERVED - CONFIRMED]
 
 **The single most consequential error in this project.** Page 0 register `0xB7`
 bit 1 is **active low**: clearing it *asserts* hot-plug detect, setting it
@@ -1373,7 +1373,7 @@ achieves full lock and the vendor driver's own validity test succeeds.
 The disassembly said so all along: `MST3367_HwInitialize` ends with an
 unconditional `p0 0xB7 = 0x00` at VMA `0x43735`, and a trace explicitly flagged
 that "Windows leaves 0xB7 = 0x00 on this device". That was overridden here on a
-mistaken empirical reading — early in the session, setting the bit appeared to
+mistaken empirical reading - early in the session, setting the bit appeared to
 make the EDID EEPROM at slave `0xa0` become visible, and that coincidence was
 taken as proof of polarity. It was not.
 
@@ -1406,13 +1406,13 @@ State with a live 1080p60 source and the full bring-up applied:
 
 | | |
 |---|---|
-| `p0 0x55` | `0x7f` — validity gate **passes** |
+| `p0 0x55` | `0x7f` - validity gate **passes** |
 | V total | 1125 |
 | H total | 2200 |
 | H active (p2 `0x28/0x29`) | 1920 |
 | stream enable `p1 0x24` | `0x41` |
-| mute pair `p0 0xB3` / `p2 0x27` | `0x00` / `0x00` — un-muted |
-| scanner regs `p2 0x11`/`0x12` | `0x7a` / `0x11` — real values |
+| mute pair `p0 0xB3` / `p2 0x27` | `0x00` / `0x00` - un-muted |
+| scanner regs `p2 0x11`/`0x12` | `0x7a` / `0x11` - real values |
 | CPLD `0x20` / `0x10` | `0x05` / `0xfe` |
 
 Everything the vendor driver configures is configured, and the receiver reports
@@ -1427,9 +1427,9 @@ Yet:
 
 #### What was tried
 
-Poking every plausible CPLD datapath register while streaming — `0x3b = 0x02`
+Poking every plausible CPLD datapath register while streaming - `0x3b = 0x02`
 (HDMI route), `0x20` with and without bit 4, `0x20 = 0x75`, `0x00`, `0x10 =
-0xFC`/`0xFE`, port-1 `0x01`/`0x11`, and `0x21`-`0x24` — produced **zero bytes in
+0xFC`/`0xFE`, port-1 `0x01`/`0x11`, and `0x21`-`0x24` - produced **zero bytes in
 every case**.
 
 The firmware register scanner (`bRequest 0xC6` with a 56-byte descriptor table,
@@ -1438,7 +1438,7 @@ interrupt endpoint, even though the registers it scans now hold valid data.
 
 #### The interrupt endpoint is the tell
 
-EP `0x81` needs no meaningful bandwidth — 64 bytes per millisecond. If the FX3
+EP `0x81` needs no meaningful bandwidth - 64 bytes per millisecond. If the FX3
 firmware were running its data-producing logic at all, the scanner should report
 there regardless of link speed. It does not.
 
@@ -1446,7 +1446,7 @@ there regardless of link speed. It does not.
 of firmware that has not started its DMA channels.
 
 This revives the reading that 5.18 retracted. That retraction was based on the
-alternate-setting tier arithmetic selecting alt 2 on a High Speed link — but that
+alternate-setting tier arithmetic selecting alt 2 on a High Speed link - but that
 only shows which alt the *host driver* picks, not that the *device firmware* will
 stream. The two are different claims and this document conflated them.
 
@@ -1467,11 +1467,11 @@ No vendor command to select capture resolution has been identified.
 
 The interrupt endpoint 0x81 shows activity without any vendor command being
 sent, so it is plausibly an unsolicited status/hotplug channel (HDMI signal
-present, resolution change). [UNKNOWN] — needs capture to confirm.
+present, resolution change). [UNKNOWN] - needs capture to confirm.
 
 ### How these get filled in
 1. `usbmon` capture of the official driver on Windows/macOS talking to the
-   device, then replay/diff. This is the only reliable route — there is no
+   device, then replay/diff. This is the only reliable route - there is no
    public datasheet.
 2. Cautious host-side probing of EP0 with benign `GET_` style requests, logging
    which `bRequest` values return data vs stall. Never write blindly: a wrong
@@ -1604,7 +1604,7 @@ only ever reaches this slave through three functions, all of them GPIO:
 `CY3014_CPLD_LoadGPIO`, `CY3014_CPLD_SaveGPIO`, `CY3014_CPLD_SetGPIO`.
 
 So the CPLD is a GPIO latch with an ID signature. Poking its registers to find a
-"datapath enable" — which earlier sessions spent a long time doing — was never
+"datapath enable" - which earlier sessions spent a long time doing - was never
 going to work. The video path from the receiver to the GPIF is not under its
 register control.
 
@@ -1630,8 +1630,8 @@ The transmitter really is an ITE part: `IT66` appears 136 times in the PDB.
   only and the handler is doing byte-wise copies.
 
 This is a real limit on the diagnostic. FX3 socket registers keep their
-interesting bits high — `SCK_STATUS` bit 31 `SCK_ENABLE`, bit 25 `SCK_GO_ENABLE`
-— so we can see a socket's descriptor number change but not whether the socket
+interesting bits high - `SCK_STATUS` bit 31 `SCK_ENABLE`, bit 25 `SCK_GO_ENABLE`
+ -  so we can see a socket's descriptor number change but not whether the socket
 is actually enabled.
 
 Socket layout confirmed against the observed data (sockets are `0x80` apart):
@@ -1656,13 +1656,13 @@ Dumping all 512 KB of SYSMEM via `0xA0` gives one contiguous refusal:
 
 | range | size | result |
 |---|---|---|
-| `0x40000000`-`0x40002F40` | 12 KB | reads fine — DMA descriptors |
+| `0x40000000`-`0x40002F40` | 12 KB | reads fine - DMA descriptors |
 | `0x40003000`-`0x40023000` | **128 KB** | every read STALLs |
-| `0x4002301C`-`0x40080000` | 372 KB | reads fine — heap and buffers |
+| `0x4002301C`-`0x40080000` | 372 KB | reads fine - heap and buffers |
 
 The boundaries are sharp and repeatable (`0x40002F00` readable, `0x40003000`
 stalls, `0x40023100` readable again). There is **no ARM code anywhere in the
-readable regions** — zero `stmfd sp!` prologues, zero `bx lr`. So the firmware
+readable regions** - zero `stmfd sp!` prologues, zero `bx lr`. So the firmware
 image sits in that 128 KB hole and the `0xA0` handler will not read it out.
 
 The readable part does carry the string
@@ -1673,7 +1673,7 @@ confirming this is a stock Cypress FX3 SDK firmware on ThreadX.
 MCU firmware shipped in the vendor package is the only decodable firmware we have.
 
 > Note: `hd60s-dumpram` pads unmapped chunks with `0xFF`, not `0x00`. A dump is
-> not all-real data — check for `0xFF` runs before drawing conclusions from it.
+> not all-real data - check for `0xFF` runs before drawing conclusions from it.
 
 ### 8.2 The video DMA channel is built exactly as it should be [OBSERVED]
 
@@ -1691,11 +1691,11 @@ Decoding `sync` as consumer in the low half, producer in the high half:
 IP block IDs `0` LPP, `1` PIB, `2` SIB, `3` UIB, `4` UIBIN, `0x3F` CPU.
 
 That gives **producer = PIB (GPIF) sockets 0 and 1, consumer = UIB socket 3 =
-endpoint `0x83` IN**, with twelve 16 KB buffers — two producer sockets
+endpoint `0x83` IN**, with twelve 16 KB buffers - two producer sockets
 ping-ponging into one USB IN endpoint. That is textbook FX3 video capture.
 
 It also matches the live register diff of 7.2 exactly: the sockets that were
-handed valid descriptors on `SET_INTERFACE` are PIB 0, PIB 1 and UIB 3 — the
+handed valid descriptors on `SET_INTERFACE` are PIB 0, PIB 1 and UIB 3 - the
 same three this table describes.
 
 ### 8.3 Conclusion: the fault is on the GPIF's input pins
@@ -1724,7 +1724,7 @@ The full sequence, verified end to end on hardware. Implemented by
 Two things, and both had been sitting in plain sight:
 
 1. **`bRequest 0xC6` with an empty payload is the DISARM form.** The bring-up
-   script had been ending with `vendor_out 0xC6 0x0000 0x0100` — wLength 0 —
+   script had been ending with `vendor_out 0xC6 0x0000 0x0100` - wLength 0  - 
    which explicitly stops the register scanner. The arm form carries a list of
    4-byte scan descriptors. Sending the real list makes the interrupt endpoint
    `0x81` produce its first ever packet.
@@ -1769,7 +1769,7 @@ Applied after the receiver reports lock (`p0 0x55 & 0x3C == 0x3C`):
 | `p0 0xB5` | `0x0C` | |
 | `p0 0xAE` | `\|= 0x04` | |
 | `p2 0x07` | `0xF4` then `0x04` | front-end reset pulse the vendor always issues |
-| **`p0 0xB0`** | **`0x25`** | **video output enable — this is what starts the data** |
+| **`p0 0xB0`** | **`0x25`** | **video output enable - this is what starts the data** |
 
 ### 9.4 The wire format [OBSERVED]
 
@@ -1784,7 +1784,7 @@ frame = 1080 active + 45 blanking = 1125 lines x 3844 = 4 324 500 bytes
 
 The 1125 is exactly the V total the receiver reports, and the 45 blanking lines
 are `Y = 0x10` throughout. Because every line is self-labelling, a receiver can
-resync from anywhere in the stream — `src/framer.c` does exactly that, then
+resync from anywhere in the stream - `src/framer.c` does exactly that, then
 strips the marker, drops blanking, and emits 1920x1080 YUY2.
 
 Measured: ~233 MB/s, 331 frames in 6 s, one resync at startup.
@@ -1792,8 +1792,8 @@ Measured: ~233 MB/s, 331 frames in 6 s, one resync at startup.
 ### 9.5 Throughput matters
 
 1080p60 at this frame size is ~259 MB/s. With 8 URBs of 128 KB the daemon only
-sustained 73 MB/s, dropped most of the stream, and — because the drops broke
-continuity — the frame period could not be measured at all. 32 URBs of 256 KB
+sustained 73 MB/s, dropped most of the stream, and - because the drops broke
+continuity - the frame period could not be measured at all. 32 URBs of 256 KB
 fixed it. If frame periodicity ever looks absent again, suspect the queue depth
 before suspecting the device.
 
@@ -1801,7 +1801,7 @@ before suspecting the device.
 
 The Windows driver picks its alternate setting from a width x height x fps
 bandwidth formula and, for 1080p60 on a normal Intel/AMD/Renesas xHCI, selects
-**alt 2** — isochronous, 32768 B/uframe. It reaches alt 4 (bulk) only for a
+**alt 2** - isochronous, 32768 B/uframe. It reaches alt 4 (bulk) only for a
 hard-coded host-controller blacklist (ASMedia `1b21:1042/1142/1242`, Etron
 `1b6f:7023`, VIA `1106:3432`) or a registry override. There is also a
 descending alt-4-to-0 retry loop in `CUSBBaseDevice::CreatePipe`, but it only
@@ -1873,14 +1873,14 @@ to be wrong:
 | Hiding place | Instrument | Result |
 |---|---|---|
 | A third line type | count `FF 00 00 KK` with unknown `KK` | **0** across 16 GB |
-| Blanking payload | compare every blanking line against flat `10 80` fill | one non-flat line per frame, and it is itself uniform (`26 83 26 7c` x960) — a flat colour |
+| Blanking payload | compare every blanking line against flat `10 80` fill | one non-flat line per frame, and it is itself uniform (`26 83 26 7c` x960) - a flat colour |
 | The 4-byte marker slot | capture the raw slot on every marker miss | only ever flat fill, never varying data |
 | A different alt | alt 2 iso vs alt 4 bulk | identical stream |
 | A second endpoint | descriptors | none; EP `0x81` is 64 B per 8 ms ≈ 8 KB/s, far under the 192 KB/s needed |
 | A second DMA channel | FX3 descriptor table at `0x40000000` | only GPIF sck 0/1 -> UIB sck 3, plus 256-byte CPU channels |
 
-The marker slot was the best candidate on arithmetic — 4 bytes x 1125 lines x
-60 fps = 270 KB/s against 192 KB/s needed — and it is simply unused.
+The marker slot was the best candidate on arithmetic - 4 bytes x 1125 lines x
+60 fps = 270 KB/s against 192 KB/s needed - and it is simply unused.
 
 ### 10.1 What has been swept, with video live
 
@@ -1895,7 +1895,7 @@ found, i.e. against a dead stream, and proved nothing. Repeated properly:
   re-init helper at `0xd06` that runs `0xC2(0)`, `0xC7(0x64)`, then the `0xC1`
   MCU handshake. Neither is a mode selector.
 - `0xEC` is a one-shot. Its builder `sub_a815` takes two parameters (payload
-  bytes 5 and 7) but has no callers at all — direct, tail-call or via a pointer
+  bytes 5 and 7) but has no callers at all - direct, tail-call or via a pointer
   table. Initialize emits it inline with `(0xC0, 0x00)`.
 
 > A reading of 24858 resyncs during one sweep looked like audio breaking frame
@@ -1904,8 +1904,8 @@ found, i.e. against a dead stream, and proved nothing. Repeated properly:
 
 ### 10.2 The unexplored surface: `bRequest 0xC3` (GSPI)
 
-`0xC3` is a generic SPI interface — `CY3014_GSPI_INIT`, `GSPI_READ_WORD`,
-`GSPI_READ_WORD_SW`, `GSPI_WRITE_WORD`, 14 call sites — and
+`0xC3` is a generic SPI interface - `CY3014_GSPI_INIT`, `GSPI_READ_WORD`,
+`GSPI_READ_WORD_SW`, `GSPI_WRITE_WORD`, 14 call sites - and
 `CY3014_OnControlPanelAnalysisThread` reads `wIndex 0x0006` and `0x001f` from it
 *during capture*. We had never issued it. Reading it back (vendor IN, `0xC3`,
 `wValue 0x0000`, `wIndex` = register, 2 bytes) a real register file answers:
@@ -1921,10 +1921,10 @@ Twelve live registers, with the three interesting ones four apart.
 > **Do not write here blind.** The board carries a Winbond W25Q32JV holding the
 > FX3 boot image, and `CY3014_GSPI_*` is how this driver family reaches SPI
 > flash on other products. A wrong write corrupts the boot image and bricks the
-> device permanently — not a replug. Establish what is on the bus for PID
+> device permanently - not a replug. Establish what is on the bus for PID
 > `005e` before writing anything.
 
-### 10.3 The audio record format [OBSERVED — decoded, not yet seen on the wire]
+### 10.3 The audio record format [OBSERVED - decoded, not yet seen on the wire]
 
 Audio shares the video stream as a second record type, distinguished by the
 **third** marker byte:
@@ -1975,10 +1975,10 @@ byte by byte on the stack as `{reg, tag|page, mask, aux}`:
 
 Ours had 10 records and used mask `0x80` on the IT6612 entry where the vendor
 uses `0xd0`. The full 56-byte list is accepted (`len=56 -> ok`) and changes
-nothing — audio still does not appear. `scripts/arm14.hd60s`.
+nothing - audio still does not appear. `scripts/arm14.hd60s`.
 
 The same function builds a second variant beginning `28 82 ff 00`, and a
-separate record `00 40 ff 32` targeting **I2C slave 0x32** — the MCU's
+separate record `00 40 ff 32` targeting **I2C slave 0x32** - the MCU's
 flash/firmware path.
 
 ### 10.5 A wedged datapath needs a power cycle, not a USB reset
@@ -1993,7 +1993,7 @@ nothing:
 p1 0x24 = 0x40                         p2 0x9B = 0x40  48 kHz audio present
 ```
 
-and still deliver 0 bytes. `libusb_reset_device` does **not** fix this — it
+and still deliver 0 bytes. `libusb_reset_device` does **not** fix this - it
 re-enumerates but does not cut power to the CPLD or the FX3's GPIF. Unplugging
 the USB cable for a few seconds does. Confirmed by bisection: the last committed
 build, which had streamed 4168 frames earlier, also returned 0 bytes in that
@@ -2018,10 +2018,10 @@ states the normal bring-up cannot.
   (`SendVendorCommandRequest` @ `0x13fd0`, 273 call sites) yields only
   `{A0, C0, C1, C2, C3, C5, C6, C7, EC}` and none is an audio gate
 
-> **`bRequest 0xC3` — CORRECTION.** An earlier note here said `0xC3` carries no
+> **`bRequest 0xC3` - CORRECTION.** An earlier note here said `0xC3` carries no
 > brick risk. That was wrong and is withdrawn. All 14 GSPI sites are gated on
 > `idProduct & 0xFFF == 0x530` (a YUAN board), so the vendor driver has never
-> sent this device a `0xC3` — meaning the binaries contain **no evidence at all**
+> sent this device a `0xC3` - meaning the binaries contain **no evidence at all**
 > about what is on that bus for PID `005e`. The GV7601 identification belongs to
 > a sibling SKU. Do not write there.
 

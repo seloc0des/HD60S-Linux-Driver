@@ -12,3 +12,4 @@ docs/watch.log
 *.pcapng
 *.wav
 *.pcm
+pdb_syms.json

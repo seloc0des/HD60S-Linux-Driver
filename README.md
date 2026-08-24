@@ -204,10 +204,15 @@ udev/       device permissions rule
 kernel/     notes toward an eventual kernel driver
 ```
 
-## Credits
+## License and credits
+
+GPL-3.0, see [LICENSE](LICENSE).
 
 Reverse engineered and written by Sean Elovirta
 ([selodev3d](https://github.com/selodev3d)).
+
+The symbol map used during reverse engineering is not shipped; regenerate it
+from Elgato's own driver package with `tools/pdbsyms.py` if you need it.
 
 Elgato and Game Capture are trademarks of their respective owners; this
 project is independent interoperability work.

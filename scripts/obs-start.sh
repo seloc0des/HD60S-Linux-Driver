@@ -2,7 +2,9 @@
 # Feed the HD60 S into OBS on Linux: video via v4l2loopback, audio via a
 # PipeWire/PulseAudio null sink. Requires a SuperSpeed (USB 3) link.
 set -u
-REPO=$(cd "$(dirname "$0")/.." && pwd)
+# resolve symlinks so this works when called as ~/.local/bin/hd60s-obs
+SELF=$(readlink -f "$0")
+REPO=$(cd "$(dirname "$SELF")/.." && pwd)
 DEV=${DEV:-}
 SIZE=${SIZE:-1920x1080}
 FPS=${FPS:-60}
@@ -14,7 +16,34 @@ FIFO=/tmp/hd60s-audio.pcm
 LOOPMOD=""
 die() { echo "error: $*" >&2; exit 1; }
 
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  cat <<EOF
+usage: ${0##*/}
+
+Brings the HD60 S up and feeds OBS: video into a v4l2loopback node, audio into
+a PipeWire/PulseAudio sink. Ctrl-C stops both and cleans up.
+
+Settings are environment variables:
+  MONITOR=1              also play the capture to your default output, or give
+                         a sink name to pick one
+  ARATE=$ARATE            audio rate the device delivers; the daemon prints the
+                         rate it measured when it exits
+  ALT=$ALT                  4 = bulk (lossless), 2 = isochronous
+  SIZE=$SIZE         frame size
+  FPS=$FPS                 frame rate
+  DEV=/dev/videoN        loopback node to use (default: autodetect by label)
+  LABEL="$LABEL"  v4l2loopback card label
+
+Running from: $REPO
+EOF
+  exit 0
+fi
+
 # --- video loopback ---
+[ -x "$REPO/hd60sd" ] || {
+  echo "hd60sd is not built yet, building it..."
+  make -C "$REPO" >/dev/null || die "build failed, run make in $REPO to see why"
+}
 modinfo v4l2loopback >/dev/null 2>&1 || die "install v4l2loopback-dkms v4l-utils"
 lsmod | grep -q '^v4l2loopback' || {
   echo "loading v4l2loopback..."

@@ -14,6 +14,7 @@ LIBUSB_CFLAGS := $(shell pkg-config --cflags libusb-1.0 2>/dev/null)
 LIBUSB_LIBS   := $(shell pkg-config --libs libusb-1.0 2>/dev/null)
 
 BINDIR  ?= /usr/local/bin
+USERBIN ?= $(HOME)/.local/bin
 UDEVDIR ?= /etc/udev/rules.d
 
 COMMON  := src/util.o
@@ -26,7 +27,7 @@ OSDESC  := hd60s-osdesc
 REGPROBE:= hd60s-regprobe
 REG     := hd60s-reg
 
-.PHONY: all clean install uninstall install-udev check-deps
+.PHONY: all clean install uninstall install-udev install-cmd uninstall-cmd check-deps
 
 all: check-deps $(PROBE) $(DUMP) $(DAEMON) $(WRTEST) $(ISOTEST) $(OSDESC) $(REGPROBE) $(REG)
 
@@ -78,6 +79,23 @@ install: all install-udev
 	install -m 0755 tools/hd60s-descdump.py $(BINDIR)/hd60s-descdump
 	install -m 0755 tools/hd60s-watch.sh $(BINDIR)/hd60s-watch
 	install -m 0755 tools/hd60s-linkcheck.py $(BINDIR)/hd60s-linkcheck
+
+# Run it from anywhere without sudo: symlink the launcher onto your PATH. It
+# points back at this checkout, so a git pull updates the command too.
+install-cmd:
+	@mkdir -p $(USERBIN)
+	@ln -sf "$(CURDIR)/scripts/obs-start.sh" "$(USERBIN)/hd60s-obs"
+	@echo "installed: $(USERBIN)/hd60s-obs -> $(CURDIR)/scripts/obs-start.sh"
+	@case ":$$PATH:" in \
+	  *":$(USERBIN):"*) echo "run 'hd60s-obs' from anywhere.";; \
+	  *) echo ""; \
+	     echo "NOTE: $(USERBIN) is not on your PATH. Add it with:"; \
+	     echo "  echo 'export PATH=\"\$$HOME/.local/bin:\$$PATH\"' >> ~/.bashrc && exec bash"; \
+	     echo "(log out and back in also works: ~/.profile picks it up)";; \
+	esac
+
+uninstall-cmd:
+	rm -f "$(USERBIN)/hd60s-obs"
 
 uninstall:
 	rm -f $(BINDIR)/$(PROBE) $(BINDIR)/hd60s-descdump $(BINDIR)/hd60s-watch

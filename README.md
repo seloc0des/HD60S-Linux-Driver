@@ -31,13 +31,22 @@ The HD60 S+ is different hardware and is **not** covered.
 sudo apt install libusb-1.0-0-dev v4l2loopback-dkms v4l-utils ffmpeg
 make
 sudo make install-udev   # device access without sudo; replug after
+make install-cmd         # optional: run it from anywhere as 'hd60s-obs'
 ```
+
+`install-cmd` drops a symlink in `~/.local/bin` pointing back at your checkout,
+so `git pull` updates the command too. It tells you if that directory is not on
+your PATH. Undo it with `make uninstall-cmd`.
 
 ## Use it with OBS
 
 ```bash
-./scripts/obs-start.sh
+./scripts/obs-start.sh    # or just: hd60s-obs
 ```
+
+Ctrl-C stops everything and cleans up. `hd60s-obs --help` lists the settings,
+all of which are environment variables: `MONITOR`, `ARATE`, `ALT`, `SIZE`,
+`FPS`, `DEV`, `LABEL`.
 
 Then in OBS:
 

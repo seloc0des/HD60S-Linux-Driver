@@ -7,7 +7,9 @@
  */
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -41,6 +43,8 @@ static int g_audio;   /* stream, then apply the audio-enable + restart the pipe 
 static const char *g_hunt;
 static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
 static FILE *g_audio_out;  /* demuxed PCM (16-bit stereo LE, ~71.6kHz delivery) */
+static int g_audio_fifo;   /* audio-out is a FIFO: write non-blocking, drop when full */
+static unsigned long long g_audio_dropped;
 static unsigned long long g_audio_written;
 static uint64_t g_audio_t0, g_audio_t1;
 static struct hd60s_framer g_framer;
@@ -101,8 +105,17 @@ static void on_audio_pcm(void *user, const uint8_t *pcm, size_t len)
 	if (!g_audio_t0) g_audio_t0 = now_ns();
 	g_audio_t1 = now_ns();
 	g_audio_written += len;
-	if (g_audio_out)
+	if (!g_audio_out)
+		return;
+	if (g_audio_fifo) {
+		/* records are < PIPE_BUF so this is all-or-nothing; a stalled
+		 * consumer must never back-pressure the USB pump (video) */
+		if (write(fileno(g_audio_out), pcm, len) < 0 &&
+		    (errno == EAGAIN || errno == EWOULDBLOCK))
+			g_audio_dropped += len;
+	} else {
 		fwrite(pcm, 1, len, g_audio_out);
+	}
 }
 
 /* Ask the receiver what it sees; cheap enough to poll once a second. */
@@ -384,6 +397,9 @@ static int run_device(const char *sinkspec, int alt, uint32_t w, uint32_t h,
 			log_info("audio: %llu bytes over %.2fs = %.0f Hz "
 				 "(16-bit stereo)", g_audio_written, sec,
 				 g_audio_written / 4.0 / sec);
+			if (g_audio_dropped)
+				log_warn("audio: dropped %llu bytes (consumer stalled)",
+					 g_audio_dropped);
 		}
 		hd60s_close(&dev);
 	}
@@ -453,6 +469,12 @@ int main(int argc, char **argv)
 			if (!g_audio_out) {
 				log_err("cannot open audio-out: %s", strerror(errno));
 				return 2;
+			}
+			struct stat ast;
+			if (fstat(fileno(g_audio_out), &ast) == 0 &&
+			    S_ISFIFO(ast.st_mode)) {
+				g_audio_fifo = 1;
+				fcntl(fileno(g_audio_out), F_SETFL, O_NONBLOCK);
 			}
 		}
 		else if (!strcmp(argv[i], "--rawdump") && i + 1 < argc) {

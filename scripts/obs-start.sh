@@ -33,8 +33,18 @@ if command -v pactl >/dev/null 2>&1; then
     pactl load-module module-null-sink sink_name=hd60s \
       sink_properties=device.description="Elgato_HD60_S_Audio" >/dev/null
   rm -f "$FIFO"; mkfifo "$FIFO"
-  # play the daemon's PCM into the null sink; OBS captures "Monitor of Elgato HD60 S Audio"
-  ( pacat --playback --device=hd60s --rate="$ARATE" --channels=2 --format=s16le --latency-msec=50 < "$FIFO" ) &
+  # play the daemon's PCM into the null sink; OBS captures "Monitor of Elgato HD60 S Audio".
+  # The device clock drifts ~1% run to run, so a fixed-rate player either lags
+  # (fifo backlog) or crackles (underruns). ffmpeg's async resampler chases the
+  # real arrival rate instead; pacat is the fallback if ffmpeg is missing.
+  if command -v ffmpeg >/dev/null 2>&1; then
+    ( ffmpeg -nostdin -loglevel error -use_wallclock_as_timestamps 1 \
+        -f s16le -ar "$ARATE" -ac 2 -i "$FIFO" \
+        -af aresample=async=2000:first_pts=0 \
+        -f pulse -device hd60s hd60s-audio ) &
+  else
+    ( pacat --playback --device=hd60s --rate="$ARATE" --channels=2 --format=s16le --latency-msec=50 < "$FIFO" ) &
+  fi
   APID=$!
   AUDIO_ARGS="--audio-out $FIFO"
   echo "audio          : PipeWire sink 'hd60s' @ ${ARATE}Hz  (OBS source: Monitor of Elgato HD60 S Audio)"

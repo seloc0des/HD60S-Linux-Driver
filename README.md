@@ -42,8 +42,11 @@ Then in OBS:
 2. **Sources -> + -> Audio Output Capture** and pick `Elgato_HD60_S_Audio`.
    (It will not appear under Audio *Input* Capture; that list is microphones
    only.)
-3. To hear the audio live, set that source's **Audio Monitoring** to
-   "Monitor and Output" in Edit -> Advanced Audio Properties.
+3. To hear the audio yourself, either set that source's **Audio Monitoring**
+   to "Monitor and Output" in Edit -> Advanced Audio Properties (it defaults
+   to off, so the meters move but nothing reaches your speakers), or skip OBS
+   monitoring entirely and start with `MONITOR=1 ./scripts/obs-start.sh`,
+   which routes the capture to your default output directly.
 
 If there is no signal you get a colour-coded status card naming what the
 receiver actually sees (red for no signal, amber for locked but no data,

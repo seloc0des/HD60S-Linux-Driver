@@ -9,7 +9,9 @@ FPS=${FPS:-60}
 ALT=${ALT:-4}                 # bulk (alt 4) is lossless; audio works on 2 and 4
 ARATE=${ARATE:-71633}        # measured delivery rate; ear-confirmed vs 48k (runs vary 70.9-71.6k)
 LABEL=${LABEL:-"Elgato HD60 S"}
+MONITOR=${MONITOR:-}          # 1 = hear it on your default sink, or name a sink
 FIFO=/tmp/hd60s-audio.pcm
+LOOPMOD=""
 die() { echo "error: $*" >&2; exit 1; }
 
 # --- video loopback ---
@@ -48,6 +50,15 @@ if command -v pactl >/dev/null 2>&1; then
   APID=$!
   AUDIO_ARGS="--audio-out $FIFO"
   echo "audio          : PipeWire sink 'hd60s' @ ${ARATE}Hz  (OBS source: Monitor of Elgato HD60 S Audio)"
+  # MONITOR=1 (or MONITOR=<sink name>) to hear the capture yourself. OBS's own
+  # monitoring works too, but this is one hop shorter and survives OBS restarts.
+  if [ -n "$MONITOR" ]; then
+    [ "$MONITOR" = "1" ] && MSINK=@DEFAULT_SINK@ || MSINK=$MONITOR
+    LOOPMOD=$(pactl load-module module-loopback source=hd60s.monitor \
+                sink="$MSINK" latency_msec=60 2>/dev/null) || LOOPMOD=""
+    [ -n "$LOOPMOD" ] && echo "monitoring     : -> $MSINK" \
+                      || echo "monitoring     : loopback failed, use OBS monitoring"
+  fi
 else
   AUDIO_ARGS=""; APID=""
   echo "audio          : no PulseAudio/PipeWire (pactl) found -- video only"
@@ -56,7 +67,13 @@ fi
 echo "video          : $DEV  $SIZE @ ${FPS}fps YUY2 (alt $ALT)"
 echo "In OBS: Video Capture Device (V4L2) -> $DEV ; Audio Input Capture -> Monitor of Elgato HD60 S Audio"
 echo "Ctrl-C stops the feed."
-cleanup() { [ -n "$APID" ] && kill "$APID" 2>/dev/null; rm -f "$FIFO"; }
+cleanup() {
+  [ -n "$APID" ] && kill "$APID" 2>/dev/null
+  # unload by module id, never by name: `pactl unload-module module-null-sink`
+  # would take out every null sink on the system, not just ours
+  [ -n "$LOOPMOD" ] && pactl unload-module "$LOOPMOD" 2>/dev/null
+  rm -f "$FIFO"
+}
 trap cleanup EXIT
 
 exec "$REPO/hd60sd" --source device \

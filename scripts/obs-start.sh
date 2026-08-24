@@ -7,7 +7,7 @@ DEV=${DEV:-}
 SIZE=${SIZE:-1920x1080}
 FPS=${FPS:-60}
 ALT=${ALT:-4}                 # bulk (alt 4) is lossless; audio works on 2 and 4
-ARATE=${ARATE:-48000}        # audio sample rate -- tune if pitch is wrong (see notes)
+ARATE=${ARATE:-71633}        # measured delivery rate; ear-confirmed vs 48k (runs vary 70.9-71.6k)
 LABEL=${LABEL:-"Elgato HD60 S"}
 FIFO=/tmp/hd60s-audio.pcm
 die() { echo "error: $*" >&2; exit 1; }

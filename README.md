@@ -3,7 +3,7 @@
 Userspace-first Linux support for the **original** Elgato Game Capture HD60 S
 (`0fd9:005e`). Not affiliated with or supported by Elgato.
 
-> **Status: working. 1920x1080 YUY2 at ~58 fps into OBS.**
+> **Status: working. 1920x1080 YUY2 at ~58 fps plus stereo audio into OBS.**
 >
 > The protocol was recovered from Elgato's Windows driver (which ships with
 > debug symbols), the macOS `libUB530.dylib`, and the device's own MCU firmware,
@@ -14,7 +14,10 @@ Userspace-first Linux support for the **original** Elgato Game Capture HD60 S
 > no bulk endpoint at all, so a USB 2 cable or port physically cannot carry
 > video. `tools/hd60s-linkcheck.py` will tell you which you have.
 >
-> Video only — audio is not implemented yet.
+> Audio comes through as 16-bit stereo PCM on the same bulk pipe (the device
+> delivers it at an odd ~71.6 kHz — that's the real rate, confirmed by ear).
+> `obs-start.sh` feeds it into a PipeWire null sink; capture "Monitor of
+> Elgato HD60 S Audio" in OBS.
 
 The HD60 S+ is different hardware and is **not** covered.
 

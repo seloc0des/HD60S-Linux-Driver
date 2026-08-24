@@ -40,7 +40,7 @@ static const char *g_post_script;
 static int g_audio;   /* stream, then apply the audio-enable + restart the pipe */
 static const char *g_hunt;
 static FILE *g_rawdump;   /* verbatim device byte stream, for format work */
-static FILE *g_audio_out;  /* demuxed PCM (16-bit stereo LE 48k) */
+static FILE *g_audio_out;  /* demuxed PCM (16-bit stereo LE, ~71.6kHz delivery) */
 static unsigned long long g_audio_written;
 static uint64_t g_audio_t0, g_audio_t1;
 static struct hd60s_framer g_framer;

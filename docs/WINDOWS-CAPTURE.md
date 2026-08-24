@@ -1,15 +1,20 @@
 # Capturing the vendor driver's audio-enable sequence (Windows)
 
-> **v2 -- CRITICAL FIX after the first trial.** The first capture was taken while
-> the Elgato app was already streaming, so it recorded only steady-state polling
-> and missed the audio-enable entirely. The capture MUST be running BEFORE the
-> app opens the stream. The one change that matters: **close the Elgato app
-> first, start the Wireshark capture, and only THEN open the app.**
+> **Done. Audio works, so nobody needs to run this to use the driver.** It took
+> three trials: the first two were taken mid-session and only ever recorded
+> steady-state polling, and the enable turned up in the third, which was running
+> before the app opened the stream. The answer is in
+> `scripts/audio-block.hd60s`. Kept here because the method generalises to
+> anything else still unknown about the device, and because the "capture before
+> the app starts" trap costs a whole session to learn.
 
 Goal: record the USB control traffic the Elgato Windows driver sends while audio
-is actually working, so we can diff it against our Linux bring-up and find the
-one thing that turns audio on. This is a read-only capture - it changes nothing
-on the device.
+is actually working, so it can be diffed against our Linux bring-up. This is a
+read-only capture and changes nothing on the device.
+
+The one rule that matters: **close the Elgato app first, start the Wireshark
+capture, and only then open the app.** A capture started against an app that is
+already streaming will miss every one-time setup command.
 
 ## What you need
 - The HD60 S, a USB 3 cable, and an HDMI source that is **playing audio**
@@ -27,8 +32,8 @@ on the device.
 4. Close the app completely.
 
 ## Phase 2 - pick the right capture interface
-1. Launch Wireshark **as Administrator** (right-click → Run as administrator).
-2. In the interface list you'll see entries named **USBPcap1, USBPcap2, …**
+1. Launch Wireshark **as Administrator** (right-click -> Run as administrator).
+2. In the interface list you'll see entries named **USBPcap1, USBPcap2, ...**
    (one per USB root hub).
 3. Click the small arrow / expand each USBPcapN to see the device tree, and find
    the one that lists **"Elgato"** or **"Game Capture HD60 S"**. Note its number.
@@ -39,13 +44,13 @@ on the device.
 The video stream is ~250 MB/s; we do NOT want that data, only the small control
 messages. Truncating each packet keeps the file tiny and stops Wireshark dropping
 packets.
-1. **Capture → Options**.
+1. **Capture -> Options**.
 2. Find your USBPcap interface row. In the **"Snaplen (B)"** column, double-click
    and set it to **512**. (Do this for each USBPcap interface you selected.)
 3. Leave everything else default. Don't start yet.
 
 ## Phase 4 - the capture
-1. In Capture → Options, click **Start**. Capture is now running.
+1. In Capture -> Options, click **Start**. Capture is now running.
 2. **Unplug and replug the HD60 S USB cable.** (This forces a full cold init so
    the whole enable sequence is recorded.)
 3. Wait ~5 seconds, then open the capture app and start the preview.
@@ -61,7 +66,7 @@ packets.
    gold). If the list is **not empty**, the capture is good.
    - If it's empty, you captured the wrong root hub. Redo Phase 2 selecting all
      USBPcapN interfaces.
-3. **File → Save As** → name it `hd60s-audio.pcapng`.
+3. **File -> Save As** -> name it `hd60s-audio.pcapng`.
 
 ## Phase 6 - get the file to the Linux machine
 Copy `hd60s-audio.pcapng` over (USB stick, network share, cloud - whatever's

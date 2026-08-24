@@ -30,7 +30,7 @@ Seven addresses respond; everything else reads `0xff` (idle bus).
 10: 96 f1 6a ee 04 f8 83 a7 00 74 e0 03 03 00 ff 00
 ```
 
-`0x00`–`0x01` = `0x4954`, ITE Tech (ASCII `"IT"`). `0x02`–`0x03` = `0x1612`,
+`0x00`-`0x01` = `0x4954`, ITE Tech (ASCII `"IT"`). `0x02`-`0x03` = `0x1612`,
 IT6612. Register `0x0e` varies between reads, so it is live status.
 
 ## CPLD - slave `0x98`
@@ -75,12 +75,12 @@ Diffed against the same page with HDMI unplugged:
 
 | Reg | No signal | Connected |
 |---|---|---|
-| `0x0e`–`0x0f` | `90 15` | `00 00` |
+| `0x0e`-`0x0f` | `90 15` | `00 00` |
 | `0x10` | `06` | `00` |
-| `0x28`–`0x29` | `06 00` | `ce 07` |
+| `0x28`-`0x29` | `06 00` | `ce 07` |
 | `0x34` | `05` | `00` |
 
-So the receiver does react to the source. But the driver's own mode test  - 
-`(page-reg 0x55 & 0x3c) == 0x3c` - still fails, because `0x55` reads `0x01`.
+So the receiver does react to the source. But the driver's own mode test,
+`(page-reg 0x55 & 0x3c) == 0x3c`, still fails, because `0x55` reads `0x01`.
 The chip sees something and has not locked, which is expected while it remains
 uninitialised.

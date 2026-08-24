@@ -18,14 +18,14 @@ nothing until the very end.
             └────────────────────────────────────────────┘
                               │
             ┌────────────────────────────────────────────┐
-  stage 2   │ hd60s-probe        read-only EP0 + irq ep  │  WRITTEN,
-            │                    → fills docs/PROTOCOL   │  needs libusb
+  stage 2   │ hd60s-probe        read-only EP0 + irq ep  │  DONE
+            │                    -> fills docs/PROTOCOL   │
             └────────────────────────────────────────────┘
                               │  (register protocol + handshake known)
             ┌────────────────────────────────────────────┐
-  stage 3   │ hd60sd             libusb capture daemon   │  BLOCKED on
-            │   proto.c  state machine                   │  stage 2
-            │   stream.c URB ring + frame reassembly     │
+  stage 3   │ hd60sd             libusb capture daemon   │  DONE
+            │   device.c  control plane + script runner  │
+            │   framer.c  demux video lines + audio      │
             │   out: v4l2loopback / raw fd / stdout      │
             └────────────────────────────────────────────┘
                               │  (streaming stable)
@@ -52,8 +52,9 @@ nothing until the very end.
 | `src/device.h` | device handle + I2C slave map |
 
 The transport layer is kept behind a narrow interface on purpose: the USB 2.0
-personality uses isochronous transfers on EP 0x83 while SuperSpeed is expected
-to use bulk, and the frame-reassembly code above it should not care which.
+personality uses isochronous transfers on EP 0x83 while SuperSpeed uses bulk on
+alt 4, and the frame-reassembly code above it does not care which. That paid
+off, since bulk turned out to be the only usable path.
 
 ## Safety rules
 

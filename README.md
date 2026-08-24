@@ -67,10 +67,15 @@ Play in the mpv window, let OBS do the recording.
 ### Audio notes
 
 The device delivers 16-bit stereo PCM interleaved in the capture stream at an
-odd ~71.6 kHz, and the exact rate drifts a little between sessions.
-`obs-start.sh` plays it into a PipeWire null sink through ffmpeg's async
-resampler, which tracks the real arrival rate, so pitch and sync hold without
-tuning. If ffmpeg is missing it falls back to a fixed-rate `pacat` feed.
+odd ~71.6 kHz, not the 48 kHz its own rate register claims. `obs-start.sh`
+plays it into a PipeWire null sink with ffmpeg at that fixed rate, or `pacat`
+if ffmpeg is missing. Override with `ARATE=` if your unit measures differently;
+the daemon prints the rate it saw when it exits.
+
+Resist the urge to put a resampler in this path. Wallclock timestamps plus
+`aresample=async` look like the right answer for a clock this strange, and they
+produce a pop roughly once a second: after any stall the filter chases an offset
+it never catches and inserts silence forever. Fixed rate is correct here.
 
 ## USB 3.0 is required
 

@@ -1,9 +1,9 @@
 /* hd60sd -- Elgato HD60 S capture daemon.
  *
- * Status: the output half works; the capture half does not exist yet, because
- * the vendor command set that starts a stream is undocumented (see
- * docs/PROTOCOL.md). --source test exercises everything downstream of the USB
- * layer so that when the protocol lands, only the input side is unproven.
+ * Brings the device up from a script, streams the bulk endpoint, demuxes the
+ * interleaved video lines and audio records, and feeds a v4l2loopback node plus
+ * a PCM sink. --source test still drives everything downstream of the USB layer
+ * without hardware, which is how the frame path stays testable.
  */
 #include <ctype.h>
 #include <errno.h>
@@ -429,19 +429,24 @@ static void usage(const char *argv0)
 	fprintf(stderr,
 		"usage: %s [options]\n"
 		"  --source test|device   test = synthetic bars (default)\n"
-		"                         device = real capture (NOT IMPLEMENTED)\n"
+		"                         device = real capture\n"
 		"  --sink SPEC            raw:PATH | v4l2:/dev/videoN | - (stdout)\n"
 		"  --size WxH             default 1920x1080 (the device's native frame)\n"
 		"  --fps N                default 60\n"
 		"  --frames N             stop after N frames (0 = forever)\n"
-		"  --alt N                iso alt setting for --source device (1 or 2)\n"
+		"  --alt N                4 = bulk (lossless, what you want), 1-2 = iso\n"
 		"  --seconds N            stop after N seconds (device source)\n"
 		"  --diagnose             report whether a signal is actually present\n"
 		"  --script FILE          run a bring-up script before streaming\n"
 		"  --post-script FILE     run a script AFTER SET_INTERFACE\n"
+		"  --audio-out PATH       write demuxed PCM (16-bit stereo LE) here\n"
+		"  --audio                apply the audio-enable and restart the pipe\n"
+		"                         (not needed with --post-script audio-block)\n"
 		"  --hunt FILE            try each line in turn, watching for bytes\n"
 		"  --rawdump FILE         write the device byte stream verbatim\n"
-		"  -v                     verbose\n",
+		"  -v                     verbose\n"
+		"\n"
+		"For everyday use run scripts/obs-start.sh, which wires both halves up.\n",
 		argv0);
 }
 

@@ -5,9 +5,14 @@ independent disassembly traces, each adversarially verified, then merged.
 Every step is tagged CONFIRMED (the disassembly clearly shows it) or
 SPECULATIVE (inferred).
 
-`scripts/vendor-bringup.hd60s` implements this. Running it on real hardware
-executes cleanly -- every register write takes -- but produces no data on
-endpoint 0x83. See the gap analysis at the end.
+> **Historical.** This is the plan as reconstructed before any of it ran, kept
+> because the reasoning and the register-level detail are still the best map of
+> the vendor init. It is not the shipping sequence: `scripts/vendor-bringup.hd60s`
+> executed cleanly but produced no data, and what finally worked is
+> `scripts/stream-cold.hd60s` (video) plus `scripts/audio-block.hd60s` (audio).
+> The gap analysis at the end called the blocker correctly, so it is worth
+> reading before touching the init. Current behaviour lives in
+> [PROTOCOL.md](PROTOCOL.md).
 
 ## Steps
 

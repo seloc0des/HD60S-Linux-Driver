@@ -1,7 +1,7 @@
 # Reverse-engineering experiment log
 
 Run these in order. Record the result of each in `docs/PROTOCOL.md` with an
-`[OBSERVED]` tag. An experiment that produces *nothing* is still a result  - 
+`[OBSERVED]` tag. An experiment that produces *nothing* is still a result:
 write it down, because "the interrupt endpoint is silent at idle" constrains
 the design just as much as a packet capture does.
 
@@ -17,9 +17,9 @@ Nothing connected to the HD60 S's HDMI input.
 ./hd60s-probe --seconds 30
 ```
 
-- **packets** → the device volunteers status unprompted. Record the cadence and
+- **packets** -> the device volunteers status unprompted. Record the cadence and
   the byte layout; the repeating fields are the status register.
-- **zero packets** → EP 0x81 is demand-driven: it only reports after a vendor
+- **zero packets** -> EP 0x81 is demand-driven: it only reports after a vendor
   command or a real input event. Proceed to E2.
 
 ## E2 - Does HDMI hotplug generate an event?
@@ -46,7 +46,7 @@ change with resolution are the timing/format fields.
 ./hd60s-probe --sweep --seconds 0
 ```
 
-Sweeps `bRequest` 0x00–0xFF for vendor IN requests at device and interface
+Sweeps `bRequest` 0x00-0xFF for vendor IN requests at device and interface
 recipients. Codes that return data or a zero-length ACK are implemented; the
 rest stall. This is device-to-host only - nothing is written.
 

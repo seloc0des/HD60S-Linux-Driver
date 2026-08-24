@@ -9,6 +9,19 @@ Living document. Everything here is tagged by how we know it:
 The device is **not** UVC. `bDeviceClass = 255` (vendor specific) on every
 interface, so no in-tree kernel driver will ever bind it.
 
+> **How this ended up, and how to read it.** Video and audio both work:
+> 1920x1080 YUY2 at 60 fps plus 16-bit stereo PCM, interleaved on the bulk
+> endpoint at SuperSpeed alt 4. The sections below are in the order they were
+> written, and later ones supersede earlier ones. So when a section says an
+> endpoint is silent, or that audio is unreachable, read on: it was answered
+> later, usually more than once. Those dead ends are kept deliberately, because
+> two of the conclusions here were retracted after being stated with confidence,
+> and knowing which readings were wrong is most of what this document is worth.
+> Sections that were overtaken are marked SUPERSEDED with a pointer.
+>
+> For just the working sequence, read section 9, then
+> `scripts/stream-cold.hd60s` (video) and `scripts/audio-block.hd60s` (audio).
+
 ---
 
 ## 1. Identity
@@ -41,7 +54,7 @@ which *did* need a host firmware push. Do not port that logic here.
 |---|---|
 | Cypress/Infineon **CYUSB3014** (ARM926EJ-S) | USB 3.0 device controller, host-facing |
 | Nuvoton **M031LD2AE** (Cortex-M0) | housekeeping MCU, peripherals + LED |
-| **MST3367** | HDMI receiver (HDMI → parallel video), I2C slave `0x9c` |
+| **MST3367** | HDMI receiver (HDMI -> parallel video), I2C slave `0x9c` |
 | ITE **IT66121FN** | HDMI transmitter (passthrough out), I2C slave `0x9a` |
 | Altera **MAX II** CPLD | GPIO expander, I2C slave `0x98` - *not* a datapath controller, see 7.6 |
 | Winbond **W25Q32JV** 4 MB SPI flash | CYUSB3014 boot image + LED animation data @ `0x300000` |
@@ -68,7 +81,7 @@ Interface 1  (vendor specific)          - control/status
   alt 0 : EP 0x81 IN  Interrupt    wMaxPacketSize 0x0040  (64 B, bInterval 1)
 ```
 
-Note there is **no OUT endpoint at all** in this personality. Every host→device
+Note there is **no OUT endpoint at all** in this personality. Every host->device
 command must therefore travel over **EP0 control transfers**.
 
 ### Bandwidth ceiling - why this mode cannot carry full-rate video
@@ -91,8 +104,14 @@ resolution/framerate, or refusing to stream video at all. [UNKNOWN] which.
 
 ## 4. SuperSpeed personality [OBSERVED]
 
-Not yet captured. The device has so far only linked at 480M on this host,
-across several cables and four receptacles on two different xHCI controllers
+> **SUPERSEDED in part.** The link does train at 5 Gbit/s and the SuperSpeed
+> descriptors are captured (they are further down this section). What follows
+> was written while it would not train, and is kept because the failure is
+> common on this device: the SuperSpeed half drops out on replug often enough
+> that `tools/hd60s-linkcheck.py` exists just to tell you which half you have.
+
+The device would not link above 480M on this host at first, across several
+cables and four receptacles on two different xHCI controllers
 (Renesas `0000:04:00.0` and `0000:08:00.3`).
 
 An A/B swap settles where the fault is **not**. A USB 3 hub and the HD60 S were
@@ -106,7 +125,7 @@ exchanged between two ports on the same controller:
 Both receptacles carry a genuine SuperSpeed link with another device and refuse
 to with the HD60 S. Host controller and ports are therefore cleared, leaving
 the cable or the device's own SuperSpeed pairs. Given several cables were tried
-with an identical signature - USB 2 half `configured`, SS half `not attached`  - 
+with an identical signature (USB 2 half `configured`, SS half `not attached`),
 the device's USB-C receptacle is the leading suspect.
 
 ### Captured at last: the SuperSpeed descriptor set [OBSERVED]
@@ -270,7 +289,7 @@ The check is on the **end** of the transfer, not the start, and over-long
 requests are refused whole rather than truncated. So `0xc0`+16 succeeds while
 `0xc0`+64 (ending at `0x100`) is rejected.
 
-Readable range is therefore `0x00`–`0xFE`, **255 bytes**. Byte `0xFF` exists but
+Readable range is therefore `0x00`-`0xFE`, **255 bytes**. Byte `0xFF` exists but
 is unreachable: any transfer including it ends at `0x100` or beyond. That looks
 like an off-by-one in the bounds check - `addr + len < 0x100` rather than
 `<= 0x100`.
@@ -288,15 +307,15 @@ handler lives in SYSMEM at `0x4000_0000`+, far outside a 255-byte window.
 
 | Range | Content |
 |---|---|
-| `0x00`–`0x2f` | ARM exception vectors, plus `B .` spin and `BX LR` handlers |
-| `0x30`–`0x4b` | seven SYSMEM branch targets |
-| `0x4c`–`0x7f` | six `LDR PC,[PC,#-4]` + absolute-address trampoline pairs, targeting I-TCM |
-| `0x80`–`0xfe` | uninitialised SRAM (see below) |
+| `0x00`-`0x2f` | ARM exception vectors, plus `B .` spin and `BX LR` handlers |
+| `0x30`-`0x4b` | seven SYSMEM branch targets |
+| `0x4c`-`0x7f` | six `LDR PC,[PC,#-4]` + absolute-address trampoline pairs, targeting I-TCM |
+| `0x80`-`0xfe` | uninitialised SRAM (see below) |
 
 The trampoline targets are I-TCM offsets `0x113c`, `0x204`, `0x76c`, `0x158`,
 `0x11a8`, `0xfd8` - all inside the 16 KB I-TCM but outside the readable window.
 
-#### `0x80`–`0xfe` is uninitialised SRAM [OBSERVED]
+#### `0x80`-`0xfe` is uninitialised SRAM [OBSERVED]
 
 The block looks statistically random and is constant across repeated reads
 *within one power cycle*, so it is not a nonce, counter or RNG output. Across a
@@ -308,7 +327,7 @@ power cycle it changes - but only slightly:
 | bytes unchanged | 80 / 124 |
 | bytes differing by 1 bit | 36 |
 | bytes differing by 2 bits | 8 |
-| `0x00`–`0x7f` (code) | byte-identical |
+| `0x00`-`0x7f` (code) | byte-identical |
 
 A freshly generated key or nonce would differ in roughly 50 % of bits. A few
 percent is the signature of **uninitialised SRAM**: each cell has a
@@ -503,7 +522,7 @@ class space on real hardware confirms it - 256 codes each at `0xA1`, `0xA0` and
 Our EP0 sweep used `bmRequestType 0xC0` and did try `bRequest 0xC1`. Both were
 correct. It failed on one parameter: **`wValue = 0`**.
 
-`wValue` is the register selector, so `wValue = 0` asks for register `0x00`  - 
+`wValue` is the register selector, so `wValue = 0` asks for register `0x00`,
 which does not exist. Measured:
 
 | Request | Result |
@@ -665,8 +684,8 @@ read reflects the low bit of what was written.
 
 #### The I2C bridge answers, but nothing is behind it yet [OBSERVED]
 
-Reading register `0x00` from every even slave address `0x00`–`0xFE`, after the
-handshake, returns **`0x33` every time** - and reading registers `0x00`–`0x0F`
+Reading register `0x00` from every even slave address `0x00`-`0xFE`, after the
+handshake, returns **`0x33` every time** - and reading registers `0x00`-`0x0F`
 from candidate HDMI addresses (`0x90`, `0x92`, `0x98`, `0x9A`, `0xB0`) also
 returns `0x33` for all of them.
 
@@ -808,19 +827,19 @@ bus):
 | Slave | reg `0x00` | Identification |
 |---|---|---|
 | `0x94` | `0x00` | regs read `00 d9 00 a0 0e 00 a0 00 60 42` |
-| `0x98` | `0x1d` | regs read `1d 02 00 …` |
+| `0x98` | `0x1d` | regs read `1d 02 00 ...` |
 | **`0x9a`** | `0x54` | **ITE chip** - see below |
 | `0x9c` | `0x02` | regs read `02 61 f5 02 01 00 08 04 03 28` |
 | `0xa4` | `0x09` | |
 | `0xaa` | `0x33` | |
 | `0xd4` | `0x10` | |
 
-Slave `0x9a` registers `0x00`–`0x03` read **`54 49 12 16`**:
+Slave `0x9a` registers `0x00`-`0x03` read **`54 49 12 16`**:
 
 | Reg | Value | Meaning |
 |---|---|---|
-| `0x00`–`0x01` | `0x4954` | vendor ID - **ITE Tech** (ASCII `"IT"`) |
-| `0x02`–`0x03` | `0x1612` | device ID - **IT6612**, matching the driver's `CIT6612` class |
+| `0x00`-`0x01` | `0x4954` | vendor ID - **ITE Tech** (ASCII `"IT"`) |
+| `0x02`-`0x03` | `0x1612` | device ID - **IT6612**, matching the driver's `CIT6612` class |
 
 That is an independently verifiable identification: a chip ID read over a
 protocol we reconstructed, agreeing with both the driver's class name and the
@@ -841,7 +860,7 @@ Every `i2c_access` call site in the driver, with the slave constant recovered:
 |---|---|---|
 | `0x64` | analog components | `CY3014_HwAnalogComponents*` |
 | `0x88` | firmware register scanner | `CY3014_CtrlFirmwareRegisterScanner` |
-| `0x94` | CS53L21 audio codec | `CY3014_CS53L21_*` |
+| `0x94` | CS42L51 audio codec | `CY3014_CS53L21_*` - vendor code has the wrong part name |
 | `0x98` | **CPLD** | `CY3014_CPLD_LoadGPIO / SaveGPIO / SetGPIO` |
 | `0x9a` | **IT6612 HDMI transmitter** (passthrough) | `CY3014_ITE6612_*` - ID verified `54 49 12 16` |
 | `0x9c` | **MST3367 HDMI receiver** | `CY3014_MST3367_*` |
@@ -937,7 +956,7 @@ conditions not yet traced.
 
 #### Mode detection
 
-`MST3367_HDMI_MODE_DETECT` (VMA `0x18ec0`) reads registers `0x55`, `0x57`–`0x5c`,
+`MST3367_HDMI_MODE_DETECT` (VMA `0x18ec0`) reads registers `0x55`, `0x57`-`0x5c`,
 `0x5f`, `0x6a`, `0x6b`, plus page `0x02` register `0x29`. Its first test is
 `(reg55 & 0x3c) == 0x3c`.
 
@@ -953,7 +972,7 @@ which depends on resolving the branch conditions above.
 ### 5.13 MST3367 addressing - a correction [OBSERVED]
 
 Slave `0x9c` is one of `i2c_access`'s **special** slaves (`0x88`, `0x98`,
-`0x9c`). Those take the slave value as the MCU command - `wValue = 0x509c`  - 
+`0x9c`). Those take the slave value as the MCU command (`wValue = 0x509c`)
 with a raw payload, **not** the generic command-`0x66` form used for every
 other slave.
 
@@ -962,7 +981,7 @@ was wrong, and wrong in the worst way: the generic form is *accepted* and
 returns plausible-looking data, but the page select does not take, so every read
 comes from whatever window happened to be active.
 
-Proof - regs `0x14`–`0x1b` after each page-select attempt:
+Proof - regs `0x14`-`0x1b` after each page-select attempt:
 
 | Page select | `14 15 16 17 18 19 1a 1b` |
 |---|---|
@@ -1030,6 +1049,9 @@ wants `(v & 0x3c) == 0x3c`) and H-total reads 0. So something beyond
 sink-presentation is still required.
 
 ### 5.15 Receiver lock - horizontal achieved, vertical not [OBSERVED]
+
+> **SUPERSEDED by 5.22 and 9.** Full lock, V total 1125, once HPD was driven
+> the right way round. The bit is active low.
 
 `scripts/hdmi-lock.hd60s` transcribes the page-2 front-end steps of
 `MST3367_HDMI_INIT` (VMA `0x18c40`) with the canonical HPD-drop/re-lock
@@ -1114,6 +1136,9 @@ results are supposed to arrive there.
 
 ### 5.17 The USB 2.0 link is the prime suspect for the silent endpoints
 
+> **SUPERSEDED.** The link was a real problem and USB 3 is genuinely required,
+> but it was not why the endpoints were silent. See section 9.
+
 Both data endpoints are completely silent while the entire control plane works:
 
 | Path | Status |
@@ -1140,7 +1165,7 @@ be settled from this host until the SuperSpeed link trains.
 #### `MST3367_VideoFormatDetection` is not the blocker
 
 This document previously named it as the main obstacle. That was wrong. Its real
-bounds are `0x43d20`–`0x49119` (one `.pdata` entry), and it dispatches on
+bounds are `0x43d20`-`0x49119` (one `.pdata` entry), and it dispatches on
 `[CDevice+0x7104]` - the registry DWORD `AnalogCrossbarVideoInputProperty`,
 which the HD60 S INF sets to 0. Values 2/3 take the analog arm at `0x43d8c`;
 0/1 take the HDMI arm at `0x47075`.
@@ -1152,7 +1177,7 @@ measured H active. So there is nothing there to transcribe.
 
 #### USB 2.0 streaming is supported by the driver
 
-The alternate-setting tier arithmetic (`0x6e73c`–`0x6e7a7`):
+The alternate-setting tier arithmetic (`0x6e73c`-`0x6e7a7`):
 
 ```
 P      = width * height * fps           (default 0x76A7000 if zero)
@@ -1179,7 +1204,7 @@ alt. `hd60sd --post-script` now runs the un-mute after SET_INTERFACE.
 
 #### Active-window measurement engine
 
-A signal check independent of the `0x55` gate (`0x48322`–`0x484b4`):
+A signal check independent of the `0x55` gate (`0x48322`-`0x484b4`):
 
 ```
 mst_write(0,0xE2,0x80); mst_write(0,0xE3,0x08); mst_write(0,0xE4,0x00)
@@ -1192,7 +1217,7 @@ width = (B-A+1) & ~7   height = D-C+1
 mst_write(0,0xE2,0x00)                       # disarm
 ```
 
-**Measured on hardware: all of `0xF3`–`0xFA` read `0x00`, giving a 0 x 1
+**Measured on hardware: all of `0xF3`-`0xFA` read `0x00`, giving a 0 x 1
 window.** With V total also 0, that means no DE and no vertical sync - there is
 no valid signal arriving. Earlier in the same session the same registers gave a
 clean 2200 x 1125, so the source stopped transmitting between the two
@@ -1202,6 +1227,8 @@ This engine is the best go/no-go signal check available, because it does not
 depend on the `0x55` gate whose bit semantics are still unknown.
 
 ### 5.19 The vertical-lock wall [OBSERVED]
+
+> **SUPERSEDED by 9.** There is no wall. HPD polarity was inverted.
 
 With a live Nintendo Switch at 1080p60 and the full reconstructed bring-up
 applied - including the corrections below - the receiver reaches a stable,
@@ -1234,7 +1261,7 @@ pixel clock and line rate. Vertical sync and data-enable are entirely absent.
 
 `MST3367_HDMI_INIT` step 7 is a read-modify-write of register `0x00` - the
 **page register itself** - setting bit 7, and that bit must stay set across the
-following `0xCE`/`0xCF` writes (`0x18D11`–`0x18D8E`).
+following `0xCE`/`0xCF` writes (`0x18D11`-`0x18D8E`).
 
 `hd60s_mst_write(page, reg, val)` re-selects the page before every access, so it
 *destroys the hold* and can never reproduce this. `hd60s_mst_raw_write/read` and
@@ -1261,6 +1288,9 @@ driver against this exact unit, so the successful register sequence can be
 diffed against ours. Static analysis has been taken about as far as it goes.
 
 ### 5.20 CORRECTION: the receiver was never locked [OBSERVED]
+
+> **SUPERSEDED by 5.22.** This correction was itself wrong. Kept because it is
+> the clearest example in this file of a confident retraction of a true result.
 
 Earlier sections of this document, and several session reports, claimed the
 receiver had achieved horizontal lock on a live 1080p60 source, citing
@@ -1316,6 +1346,9 @@ output, so every judgement about the source has come through the same
 uninitialised receiver we are trying to debug.
 
 ### 5.21 HPD reaches the hardware; TMDS never arrives [OBSERVED]
+
+> **SUPERSEDED by 9.** TMDS arrives. HPD was being de-asserted by the write
+> that was meant to assert it.
 
 A differential capture of all 768 MST3367 registers (pages 0, 1, 2) with HPD
 asserted for 3 s versus de-asserted for 3 s. Exactly three registers differ:
@@ -1399,6 +1432,9 @@ out. That is now the sharpest remaining lead.
 
 ### 5.23 With the receiver locked, both data endpoints are still silent [OBSERVED]
 
+> **SUPERSEDED by 9.** Both endpoints deliver. Video needed `p0 0xB0 = 0x25`
+> and the `0xC6` scan-list arm; the interrupt endpoint needed the armed form.
+
 This is the cleanest evidence the project has produced, because for the first
 time the receiver side is provably correct.
 
@@ -1458,12 +1494,20 @@ No vendor command to select capture resolution has been identified.
 
 ### 5.24 Still unknown
 
-- `bRequest` / `wValue` / `wIndex` values for any operation
-- the MCU-presence handshake reportedly required before register access works
-- the "tunneled register" form used after that handshake
-- register map (input status, EDID, resolution, HDCP state, LED)
-- video packet framing, pixel format, resolution negotiation
-- audio format and whether audio is muxed into the video endpoint
+> **All resolved.** Kept as a snapshot of what was open at this point. Where
+> each one landed:
+
+- `bRequest` / `wValue` / `wIndex` values for any operation -> 5.9, 5.10
+- the MCU-presence handshake reportedly required before register access -> 5.9
+- the "tunneled register" form used after that handshake -> 5.10
+- register map (input status, EDID, resolution, HDCP state, LED) -> 5.11 to 5.16
+- video packet framing, pixel format, resolution negotiation -> 9.4
+- audio format and whether audio is muxed into the video endpoint -> 10.3, and
+  yes, it is muxed into the same endpoint
+
+The guess below is also wrong, and section 9.1 explains why: the interrupt
+endpoint is demand-driven, and the traffic seen here followed an earlier `0xC6`
+that happened to be an arm rather than the disarm form used later.
 
 The interrupt endpoint 0x81 shows activity without any vendor command being
 sent, so it is plausibly an unsolicited status/hotplug channel (HDMI signal
@@ -1489,6 +1533,9 @@ driver attempts to defeat that. Consoles generally allow disabling HDCP for
 game output; that is the supported path.
 
 ## 7. Where the data stops [OBSERVED]
+
+> **SUPERSEDED by 9.** The FX3 was not starved by a hardware fault. The
+> receiver's video output enable was simply never set.
 
 Established 2026-08-23, with the receiver locked to a 1080p60 Switch over a
 SuperSpeed link. This section supersedes any earlier speculation about the
@@ -1631,7 +1678,7 @@ The transmitter really is an ITE part: `IT66` appears 136 times in the PDB.
 
 This is a real limit on the diagnostic. FX3 socket registers keep their
 interesting bits high - `SCK_STATUS` bit 31 `SCK_ENABLE`, bit 25 `SCK_GO_ENABLE`
- -  so we can see a socket's descriptor number change but not whether the socket
+ - so we can see a socket's descriptor number change but not whether the socket
 is actually enabled.
 
 Socket layout confirmed against the observed data (sockets are `0x80` apart):
@@ -1682,8 +1729,8 @@ MCU firmware shipped in the vendor package is the only decodable firmware we hav
 
 | sync | count | buffer size | meaning |
 |---|---|---|---|
-| `0xc100c303` | 6 | 16384 | PIB (GPIF) socket 0 → UIB socket 3 |
-| `0xc101c303` | 6 | 16384 | PIB (GPIF) socket 1 → UIB socket 3 |
+| `0xc100c303` | 6 | 16384 | PIB (GPIF) socket 0 -> UIB socket 3 |
+| `0xc101c303` | 6 | 16384 | PIB (GPIF) socket 1 -> UIB socket 3 |
 
 Decoding `sync` as consumer in the low half, producer in the high half:
 `cons_sck = sync & 0xFF`, `cons_ip = (sync >> 8) & 0x3F`,
@@ -1699,6 +1746,9 @@ handed valid descriptors on `SET_INTERFACE` are PIB 0, PIB 1 and UIB 3 - the
 same three this table describes.
 
 ### 8.3 Conclusion: the fault is on the GPIF's input pins
+
+> **SUPERSEDED by 9.** No fault. `p0 0xB0` bit 0 was clear, which is a register
+> write, not a broken board.
 
 Everything downstream of the GPIF is confirmed good:
 
@@ -1724,7 +1774,7 @@ The full sequence, verified end to end on hardware. Implemented by
 Two things, and both had been sitting in plain sight:
 
 1. **`bRequest 0xC6` with an empty payload is the DISARM form.** The bring-up
-   script had been ending with `vendor_out 0xC6 0x0000 0x0100` - wLength 0  - 
+   script had been ending with `vendor_out 0xC6 0x0000 0x0100` (wLength 0),
    which explicitly stops the register scanner. The arm form carries a list of
    4-byte scan descriptors. Sending the real list makes the interrupt endpoint
    `0x81` produce its first ever packet.
@@ -1857,7 +1907,14 @@ confirm the reads are real rather than a fixed preset:
 So the survey in 7.6 stands: nine live registers, four of them ASCII `TEST`,
 none of them reacting to video.
 
-## 10. Audio: where it is not [OBSERVED]
+## 10. Audio [OBSERVED]
+
+> **Read 10.12 first.** Audio works. Sections 10.1 through 10.11 are the hunt
+> for it and they get steadily more certain that it is impossible, which it was
+> not. The enable is CS42L51 codec configuration plus three MCU GPIO commands,
+> applied after `SET_INTERFACE`, and it lives in `scripts/audio-block.hd60s`.
+> The rate claims below are also wrong: the receiver reports 48 kHz but the
+> device delivers about 71.6 kHz, measured over 90 s and confirmed by ear.
 
 The receiver has audio. MST3367 `p2 0x9B` reads `0x40`, and `libUB530.dylib`'s
 `GetAudioSampleRate` (vtable+0x40 -> `0x9184`) decodes that register's high
@@ -1924,7 +1981,7 @@ Twelve live registers, with the three interesting ones four apart.
 > device permanently - not a replug. Establish what is on the bus for PID
 > `005e` before writing anything.
 
-### 10.3 The audio record format [OBSERVED - decoded, not yet seen on the wire]
+### 10.3 The audio record format [OBSERVED]
 
 Audio shares the video stream as a second record type, distinguished by the
 **third** marker byte:
@@ -2027,6 +2084,9 @@ states the normal bring-up cannot.
 
 ### 10.7 The audio blocker is inside the FX3 firmware, which is unreadable
 
+> **SUPERSEDED by 10.12.** There is no FX3 blocker. The enable is host-side
+> config that had not been sent.
+
 After exhausting the receiver and codec side, the remaining diagnostics all point
 to the FX3, and the FX3's firmware cannot be read by any safe means we have.
 
@@ -2057,6 +2117,9 @@ Why the firmware itself cannot be obtained:
 
 ### 10.8 Receiver audio side: confirmed complete
 
+> **SUPERSEDED by 10.12.** The receiver side was not complete: the codec needed
+> configuring and its clock gating needed releasing over MCU GPIO.
+
 For the record, so this is not re-tried: the entire MCU receiver-audio
 configuration has been replayed on hardware and produces no audio records.
 
@@ -2077,6 +2140,8 @@ audio -- the same method that is normally used for this class of problem. It is
 read-only and safe; it just needs the vendor software running once on any host.
 
 ### 10.9 On-device audio experiments: all exhausted [OBSERVED]
+
+> **SUPERSEDED by 10.12.** Not exhausted. The untried combination worked.
 
 The Windows capture (trial.pcapng) proved audio flows on the vendor driver
 (11807 FF 00 FF records at 48 kHz) but was taken mid-stream -- the app was
@@ -2156,6 +2221,10 @@ Safe subset to try first: the three IT6612 (0x9a) writes plus the audio unmute
 
 ### 10.11 Audio-enable replicated faithfully -- still no audio on our unit
 
+> **SUPERSEDED by 10.12.** The cold-init capture proposed at the end of this
+> section was taken, and it did contain a distinct enable. Nothing below is
+> wrong about what was tried; the conclusion drawn from it is.
+
 Implemented the captured sequence in C (hd60s_audio_enable, --audio flag) with
 the EDID cycle done FAST (bare MCU-proxy writes, no 8ms delays, 0x24 restored to
 0x40 immediately). This solved the desync: the source stays locked (0x55=0x7f)
@@ -2185,3 +2254,44 @@ HD60 S is plugged in, capturing enumeration through the first audio. If a
 distinct audio-enable command exists, it is there. If that capture shows nothing
 new (device self-inits, audio purely source-driven), then audio is gated by FX3
 firmware state we cannot reach over USB, and is not obtainable with this driver.
+
+---
+
+### 10.12 Audio works. The enable is codec config plus MCU GPIO [OBSERVED]
+
+The cold-init capture (trial3) settled it. There is no FX3 gate and there never
+was. The enable is host-side configuration this driver simply had not been
+sending, and it is two things together:
+
+1. **CS42L51 codec configuration** at I2C slave `0x94`: power/clock setup,
+   PGA and mixer levels, then unmute. Doing this alone changes nothing, which
+   is why 10.6 concluded the codec was not it.
+2. **Three MCU GPIO commands** on command `0x66`, forcing the PA pins that gate
+   the codec's clock and reset lines, plus `0xd4` register 4:
+
+```
+mcu_write 0x66 0xAA 0x12 0x34 0x90 0x05 0x00
+mcu_write 0x66 0xAA 0x12 0x34 0x90 0x03 0x00
+mcu_write 0x66 0xd4 0x00 0x04 0x03
+```
+
+Neither half works without the other, which is what made this hard: every
+earlier experiment tried one or the other. The full sequence is
+`scripts/audio-block.hd60s`. Apply it as a `--post-script`, after
+`SET_INTERFACE`, while the pipe is live. It works on both bulk alt 4 and iso
+alt 2, so audio is not alt-dependent.
+
+**Why the earlier conclusion was wrong.** 10.7 through 10.11 reasoned from
+"every host-side lead is exhausted, therefore the blocker is in firmware we
+cannot read". The leads were not exhausted: the untried combination was the
+answer. Absence of evidence got written up as evidence of absence, twice, with
+increasing confidence. The MCU GPIO writes had never been sent because nothing
+in the static analysis suggested they mattered, and they only appear in a
+capture taken from a genuinely cold device.
+
+**Delivery rate.** The records arrive at about 71.6 kHz of 16-bit stereo frames,
+not the 48 kHz the receiver's rate register reports and not what the vendor's
+192 KB ring implies. Measured at 70902, 70944 and 71633 Hz across sessions,
+steady within a session, and confirmed by ear against a 48 kHz rendering of the
+same capture. Treat the receiver's rate nibble as describing the incoming HDMI
+stream, not the rate the FX3 hands to the host.

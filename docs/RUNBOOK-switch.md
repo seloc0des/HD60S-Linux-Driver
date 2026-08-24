@@ -16,7 +16,7 @@ Everything here is read-only. Safe to run repeatedly.
 
 **Hardware**
 - Switch must be **docked** - handheld mode has no HDMI output.
-- Dock's **HDMI OUT** → HD60 S **HDMI IN**. The HD60 S also has an HDMI OUT
+- Dock's **HDMI OUT** -> HD60 S **HDMI IN**. The HD60 S also has an HDMI OUT
   (passthrough to a TV); it is the wrong port for this.
 - A TV on the passthrough is optional but handy: it confirms the Switch is
   actually outputting.
@@ -46,9 +46,9 @@ Unplug HDMI from the HD60 S input entirely. Leave the USB cable in.
 ```
 
 Read the last line, `captured N interrupt packet(s)`:
-- **N = 0** → the endpoint is demand-driven, silent until asked or until
+- **N = 0** -> the endpoint is demand-driven, silent until asked or until
   something happens. Expected.
-- **N > 0** → it free-runs. Note the interval between packets.
+- **N > 0** -> it free-runs. Note the interval between packets.
 
 ## Step B - vendor request sweep, nothing connected
 
@@ -63,7 +63,7 @@ responded.
 ## Step C - connect the Switch, then listen
 
 Now connect: Switch docked and **powered on with a game or HOME menu showing**,
-dock HDMI OUT → HD60 S HDMI IN.
+dock HDMI OUT -> HD60 S HDMI IN.
 
 ```bash
 ./hd60s-probe --seconds 20 2>&1 | tee docs/captures/C-idle-switch1080.log
@@ -105,7 +105,7 @@ demand-driven - also a useful, design-shaping result.
 
 ## Step G - resolution change
 
-On the Switch: **System Settings → TV Output → TV Resolution**. Capture at two
+On the Switch: **System Settings -> TV Output -> TV Resolution**. Capture at two
 resolutions.
 
 ```bash

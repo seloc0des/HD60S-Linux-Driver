@@ -491,6 +491,9 @@ int main(int argc, char **argv)
 			    S_ISFIFO(ast.st_mode)) {
 				g_audio_fifo = 1;
 				fcntl(fileno(g_audio_out), F_SETFL, O_NONBLOCK);
+				/* shallow pipe: a consumer stall can only bank
+				 * ~57ms of standing latency before we drop */
+				fcntl(fileno(g_audio_out), F_SETPIPE_SZ, 16384);
 			}
 		}
 		else if (!strcmp(argv[i], "--rawdump") && i + 1 < argc) {

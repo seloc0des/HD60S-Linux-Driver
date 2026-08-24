@@ -13,6 +13,11 @@ supported by Elgato.
 > verified on real hardware. Every fact in the docs is tagged by how it is
 > known; nothing is invented.
 
+![A Nintendo Switch game captured through an HD60 S into OBS on Linux at 1080p60, with the Elgato audio source metering in the OBS mixer](docs/images/obs-capture.jpg)
+
+Switch output going through the HD60 S into OBS on Pop!\_OS: 1080p60 video on
+the V4L2 loopback, and the card's own audio metering in the mixer next to it.
+
 The HD60 S+ is different hardware and is **not** covered.
 
 ## Requirements
@@ -47,6 +52,11 @@ Then in OBS:
    to off, so the meters move but nothing reaches your speakers), or skip OBS
    monitoring entirely and start with `MONITOR=1 ./scripts/obs-start.sh`,
    which routes the capture to your default output directly.
+
+![The OBS audio source properties row showing Device set to Elgato_HD60_S_Audio, with the source metering in the mixer below](docs/images/obs-audio-source.jpg)
+
+That is what step 2 should look like when it is right: the source's **Device**
+reads `Elgato_HD60_S_Audio`, and Audio Output Capture meters in the mixer.
 
 If there is no signal you get a colour-coded status card naming what the
 receiver actually sees (red for no signal, amber for locked but no data,

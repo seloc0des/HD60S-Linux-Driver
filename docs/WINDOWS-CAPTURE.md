@@ -1,5 +1,11 @@
 # Capturing the vendor driver's audio-enable sequence (Windows)
 
+> **v2 -- CRITICAL FIX after the first trial.** The first capture was taken while
+> the Elgato app was already streaming, so it recorded only steady-state polling
+> and missed the audio-enable entirely. The capture MUST be running BEFORE the
+> app opens the stream. The one change that matters: **close the Elgato app
+> first, start the Wireshark capture, and only THEN open the app.**
+
 Goal: record the USB control traffic the Elgato Windows driver sends while audio
 is actually working, so we can diff it against our Linux bring-up and find the
 one thing that turns audio on. This is a read-only capture — it changes nothing

@@ -2075,3 +2075,39 @@ working audio session** (Windows or macOS + the Elgato app + usbmon/Wireshark).
 Diffing that against our stream-start would show the exact bytes that enable
 audio -- the same method that is normally used for this class of problem. It is
 read-only and safe; it just needs the vendor software running once on any host.
+
+### 10.9 On-device audio experiments: all exhausted [OBSERVED]
+
+The Windows capture (trial.pcapng) proved audio flows on the vendor driver
+(11807 FF 00 FF records at 48 kHz) but was taken mid-stream -- the app was
+already running, so it contains only steady-state polling, no SET_INTERFACE and
+no init. Every audio lead derivable from it has now been tested on hardware and
+none produces a single FF 00 FF record:
+
+| experiment | video | audio |
+|---|---|---|
+| full MCU receiver-audio table (0x7600, 23 regs) | ok | none |
+| CS42L51 codec (slave 0x94) init | ok | none |
+| 14-record scan list + doorbell serviced | ok | none |
+| slave 0xd4 full 208-reg table blast | **BROKE** datapath | none |
+| slave 0xd4 two steady-state writes only | ok | none |
+| drop the 0xC6 scanner arm | ok | none |
+| drop all vendor_out (0xEC/0xC2/0xC7/0xC6) | ok | none |
+| alt 2 (iso, the alt the vendor used) | ok | none |
+
+Two useful negatives: our heavy init does NOT suppress audio (dropping it all
+still gives video and no audio), and audio is not alt-dependent (iso alt 2 is no
+different from bulk alt 4). Video works with a fully vendor-like minimal
+bring-up, confirming 0xEC/0xC2/0xC7/0xC6 were never needed.
+
+The vendor's steady state writes almost nothing (only slave 0xd4 reg 0x2a/0x01,
+which is sample-rate tracking) and reaches everything through the MCU proxy
+(bRequest 0xC0) -- it never sends 0xC1/0xC6/0xEC at all. So the audio enable is
+NOT a steady-state action; it happens once, at stream-open, from an idle device
+-- exactly the window the trial capture missed.
+
+**Definitive remaining step: a cold-init capture** -- Wireshark running BEFORE
+the vendor app opens the stream, so the SET_INTERFACE and the stream-open 0xC0
+commands are recorded. See docs/WINDOWS-CAPTURE.md. Absent that, audio cannot be
+resolved without risking the datapath, and the 0xd4 blast showed that risk is
+real.

@@ -573,13 +573,14 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 {
 	char line[512];
 	FILE *f = fopen(path, "r");
-	int lineno = 0, errors = 0, rc;
+	int lineno = 0, errors = 0, rc, cmds;
 
 	if (!f) {
 		log_err("cannot open %s: %s", path, strerror(errno));
 		return -1;
 	}
 	log_info("running bring-up script %s", path);
+	cmds = 0;
 
 	while (fgets(line, sizeof(line), f)) {
 		char *tok[80], *p, *save = NULL;   /* a 0xC6 arm list is 44 tokens */
@@ -597,6 +598,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 			tok[n++] = p;
 		if (!n)
 			continue;
+		cmds++;
 
 		/* a leading '-' means "this one is allowed to fail", the way
 		 * make treats it. Some vendor commands legitimately stall
@@ -716,7 +718,9 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 					lineno, a[0]);
 				errors++;
 			} else {
-				log_info("  mcu 0x%02lx <- %d byte(s)", a[0], nd);
+				/* -v only: an EDID block is ~200 of these and
+				 * drowns everything worth reading */
+				log_dbg("  mcu 0x%02lx <- %d byte(s)", a[0], nd);
 			}
 		} else if (!strcmp(tok[0], "mcu_read") && n == 3) {
 			/* mcu_read CMD LEN */
@@ -888,7 +892,7 @@ int hd60s_run_script(struct hd60s_dev *d, const char *path)
 		}
 	}
 	fclose(f);
-	log_info("script done, %d error(s)", errors);
+	log_info("script done: %d command(s), %d error(s)", cmds, errors);
 	return errors ? -1 : 0;
 }
 
